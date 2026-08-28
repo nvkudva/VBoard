@@ -25,7 +25,7 @@ dependencyResolutionManagement {
         mavenCentral()
         // sherpa-onnx ships its Android AAR through JitPack (see jitpack.yml upstream).
         maven("https://jitpack.io") {
-            content { includeGroup("com.github.k2-fsa") }
+            content { includeGroupByRegex("com\\.github\\.k2-fsa(\\..*)?") }
         }
     }
 }
