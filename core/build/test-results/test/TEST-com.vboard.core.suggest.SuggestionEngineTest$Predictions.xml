@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="predictions" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:25.272Z" hostname="vm" time="0.013">
+  <properties/>
+  <testcase name="empty composing yields predictions()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.001"/>
+  <testcase name="user bigram history beats generic predictions()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.005"/>
+  <testcase name="built-in bigram table predicts thank -- you()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.001"/>
+  <testcase name="never predicts the previous word again()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.0"/>
+  <testcase name="predictions fall back to top unigrams without a previous word()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.001"/>
+  <testcase name="pronoun i is presented capitalized in predictions()" classname="com.vboard.core.suggest.SuggestionEngineTest$Predictions" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

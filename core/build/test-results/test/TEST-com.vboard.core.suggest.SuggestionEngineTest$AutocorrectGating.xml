@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="autocorrect gating" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:24.730Z" hostname="vm" time="0.032">
+  <properties/>
+  <testcase name="conservative mode refuses two-edit corrections that aggressive accepts()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.007"/>
+  <testcase name="mode OFF suppresses autocorrect but keeps suggestions()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.003"/>
+  <testcase name="lone i is untouched when mode is OFF or field is not TEXT()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.001"/>
+  <testcase name="single letters other than i are not autocorrected()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.001"/>
+  <testcase name="lone i becomes I in text fields()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.002"/>
+  <testcase name="all-caps tokens are never autocorrected()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.001"/>
+  <testcase name="words already in the lexicon are never autocorrected()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.009"/>
+  <testcase name="tokens containing digits are never autocorrected()" classname="com.vboard.core.suggest.SuggestionEngineTest$AutocorrectGating" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

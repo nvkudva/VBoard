@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VBoard</string>
+    <string name="ime_name">VBoard</string>
+    <string name="subtype_en_us">English (US)</string>
+    <string name="settings_title">VBoard Settings</string>
+
+    <!-- Voice bar -->
+    <string name="voice_listening">Listening…</string>
+    <string name="voice_tap_to_speak">Tap the mic and start speaking</string>
+    <string name="voice_cleaning">Cleaning ✨</string>
+    <string name="voice_error_no_permission">Microphone access is needed for voice typing</string>
+    <string name="voice_error_no_permission_action">Allow</string>
+    <string name="voice_error_no_model">Voice models aren\'t downloaded yet</string>
+    <string name="voice_error_no_model_action">Download</string>
+    <string name="voice_error_mic_busy">Microphone is in use by another app</string>
+    <string name="voice_error_generic">Something went wrong with voice typing</string>
+    <string name="voice_back_to_keyboard">Back to keyboard</string>
+
+    <!-- Accessibility -->
+    <string name="a11y_mic_key">Voice typing</string>
+    <string name="a11y_backspace">Backspace</string>
+    <string name="a11y_enter">Enter</string>
+    <string name="a11y_shift">Shift</string>
+    <string name="a11y_symbols">Symbols</string>
+    <string name="a11y_letters">Letters</string>
+    <string name="a11y_emoji">Emoji</string>
+    <string name="a11y_space">Space</string>
+    <string name="a11y_voice_orb_listening">Listening. Double-tap to stop.</string>
+
+    <!-- Model download notifications -->
+    <string name="download_channel_name">Model downloads</string>
+    <string name="download_notification_title">Downloading voice models</string>
+    <string name="download_complete">Voice models ready</string>
+    <string name="download_failed">Model download failed</string>
+</resources>

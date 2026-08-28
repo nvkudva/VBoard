@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="bundled English lexicon" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:24.654Z" hostname="vm" time="0.033">
+  <properties/>
+  <testcase name="does not contain apostrophe-dropped typo tokens()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.002"/>
+  <testcase name="loads at least 30k words()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.001"/>
+  <testcase name="contains only lowercase letters and internal apostrophes()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.023"/>
+  <testcase name="frequency ordering is sane()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.0"/>
+  <testcase name="contains common contractions with apostrophes()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.001"/>
+  <testcase name="does not contain slurs or blocklisted profanity()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.001"/>
+  <testcase name="contains core vocabulary()" classname="com.vboard.core.suggest.LexiconTest$BundledEnglish" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

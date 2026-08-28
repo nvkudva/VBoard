@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="corrections" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:24.798Z" hostname="vm" time="0.027">
+  <properties/>
+  <testcase name="teh corrects to the()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <testcase name="helo corrects to hello()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <testcase name="adn corrects to and via transposition()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.0"/>
+  <testcase name="user bigram history reorders otherwise stronger candidates()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.009"/>
+  <testcase name="short words only allow one edit()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <testcase name="qwerty-adjacent substitution outranks a more frequent distant one()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <testcase name="recieve corrects to receive()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.006"/>
+  <testcase name="hte corrects to the via transposition()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <testcase name="corrected text follows the typed casing()" classname="com.vboard.core.suggest.SuggestionEngineTest$Corrections" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

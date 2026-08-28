@@ -1,0 +1,112 @@
+package com.vboard.app.settings
+
+import android.content.Context
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.vboard.app.keyboard.ThemeMode
+import com.vboard.core.suggest.AutocorrectMode
+import com.vboard.core.text.CleanupOptions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+
+private val Context.dataStore by preferencesDataStore(name = "vboard_settings")
+
+/** Everything the IME needs per keystroke, resolved once per settings change. */
+data class SettingsSnapshot(
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val hapticsEnabled: Boolean = true,
+    val keyPreviewEnabled: Boolean = true,
+    val soundEnabled: Boolean = false,
+    val autoCapitalize: Boolean = true,
+    val doubleSpacePeriod: Boolean = true,
+    val autocorrectMode: AutocorrectMode = AutocorrectMode.CONSERVATIVE,
+    val suggestionsEnabled: Boolean = true,
+    // Voice
+    val removeFillers: Boolean = true,
+    val aggressiveFillers: Boolean = false,
+    val resolveSelfCorrections: Boolean = true,
+    val autoPunctuate: Boolean = true,
+    val spokenCommands: Boolean = true,
+    val rawTranscriptMode: Boolean = false,
+    val llmRefineEnabled: Boolean = false,
+) {
+    fun cleanupOptions(): CleanupOptions =
+        if (rawTranscriptMode) {
+            CleanupOptions.RAW
+        } else {
+            CleanupOptions(
+                removeFillers = removeFillers,
+                aggressiveFillers = aggressiveFillers,
+                resolveSelfCorrections = resolveSelfCorrections,
+                collapseRepetitions = true,
+                autoPunctuate = autoPunctuate,
+                autoCapitalize = autoCapitalize,
+                spokenCommands = spokenCommands,
+            )
+        }
+}
+
+class SettingsRepository(context: Context, scope: CoroutineScope) {
+
+    private val dataStore = context.applicationContext.dataStore
+
+    object Keys {
+        val THEME = stringPreferencesKey("theme_mode")
+        val HAPTICS = booleanPreferencesKey("haptics")
+        val KEY_PREVIEW = booleanPreferencesKey("key_preview")
+        val SOUND = booleanPreferencesKey("sound")
+        val AUTO_CAP = booleanPreferencesKey("auto_capitalize")
+        val DOUBLE_SPACE = booleanPreferencesKey("double_space_period")
+        val AUTOCORRECT = stringPreferencesKey("autocorrect_mode")
+        val SUGGESTIONS = booleanPreferencesKey("suggestions")
+        val FILLERS = booleanPreferencesKey("remove_fillers")
+        val FILLERS_AGGRESSIVE = booleanPreferencesKey("aggressive_fillers")
+        val SELF_CORRECT = booleanPreferencesKey("self_corrections")
+        val AUTO_PUNCT = booleanPreferencesKey("auto_punctuate")
+        val SPOKEN_COMMANDS = booleanPreferencesKey("spoken_commands")
+        val RAW_MODE = booleanPreferencesKey("raw_transcript")
+        val LLM_REFINE = booleanPreferencesKey("llm_refine")
+    }
+
+    val flow: Flow<SettingsSnapshot> = dataStore.data.map { prefs -> prefs.toSnapshot() }
+
+    /** Hot cached snapshot for the IME's key-press path (never blocks). */
+    val snapshot: StateFlow<SettingsSnapshot> =
+        flow.stateIn(scope, SharingStarted.Eagerly, SettingsSnapshot())
+
+    private fun Preferences.toSnapshot() = SettingsSnapshot(
+        themeMode = enumOrDefault(this[Keys.THEME], ThemeMode.SYSTEM),
+        hapticsEnabled = this[Keys.HAPTICS] ?: true,
+        keyPreviewEnabled = this[Keys.KEY_PREVIEW] ?: true,
+        soundEnabled = this[Keys.SOUND] ?: false,
+        autoCapitalize = this[Keys.AUTO_CAP] ?: true,
+        doubleSpacePeriod = this[Keys.DOUBLE_SPACE] ?: true,
+        autocorrectMode = enumOrDefault(this[Keys.AUTOCORRECT], AutocorrectMode.CONSERVATIVE),
+        suggestionsEnabled = this[Keys.SUGGESTIONS] ?: true,
+        removeFillers = this[Keys.FILLERS] ?: true,
+        aggressiveFillers = this[Keys.FILLERS_AGGRESSIVE] ?: false,
+        resolveSelfCorrections = this[Keys.SELF_CORRECT] ?: true,
+        autoPunctuate = this[Keys.AUTO_PUNCT] ?: true,
+        spokenCommands = this[Keys.SPOKEN_COMMANDS] ?: true,
+        rawTranscriptMode = this[Keys.RAW_MODE] ?: false,
+        llmRefineEnabled = this[Keys.LLM_REFINE] ?: false,
+    )
+
+    private inline fun <reified T : Enum<T>> enumOrDefault(raw: String?, default: T): T =
+        raw?.let { value -> enumValues<T>().firstOrNull { it.name == value } } ?: default
+
+    suspend fun setBoolean(key: Preferences.Key<Boolean>, value: Boolean) {
+        dataStore.edit { it[key] = value }
+    }
+
+    suspend fun setString(key: Preferences.Key<String>, value: String) {
+        dataStore.edit { it[key] = value }
+    }
+}

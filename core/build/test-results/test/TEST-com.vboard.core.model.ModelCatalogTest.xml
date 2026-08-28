@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.vboard.core.model.ModelCatalogTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:23.990Z" hostname="vm" time="0.064">
+  <properties/>
+  <testcase name="required and archive flags match spec()" classname="com.vboard.core.model.ModelCatalogTest" time="0.053"/>
+  <testcase name="downloading fraction is bytesDone over bytesTotal and safe at zero total()" classname="com.vboard.core.model.ModelCatalogTest" time="0.001"/>
+  <testcase name="byKind maps each kind to its pack()" classname="com.vboard.core.model.ModelCatalogTest" time="0.001"/>
+  <testcase name="byId returns matching pack and null for unknown id()" classname="com.vboard.core.model.ModelCatalogTest" time="0.001"/>
+  <testcase name="catalog contains exactly the three expected packs()" classname="com.vboard.core.model.ModelCatalogTest" time="0.0"/>
+  <testcase name="placeholder hashes are empty and sizes sum into totalBytes()" classname="com.vboard.core.model.ModelCatalogTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

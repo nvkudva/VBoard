@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.vboard.core.text.CommitPlannerTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:25.307Z" hostname="vm" time="0.013">
+  <properties/>
+  <testcase name="no space before punctuation insert()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <testcase name="space added after sentence punctuation()" classname="com.vboard.core.text.CommitPlannerTest" time="0.0"/>
+  <testcase name="no space at field start()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <testcase name="no space after open bracket or quote()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <testcase name="no space after existing space or newline()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <testcase name="adds space between words()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <testcase name="double space period does not apply after punctuation or space()" classname="com.vboard.core.text.CommitPlannerTest" time="0.0"/>
+  <testcase name="double space period applies after word()" classname="com.vboard.core.text.CommitPlannerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

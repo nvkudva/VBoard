@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="serialization" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:25.296Z" hostname="vm" time="0.008">
+  <properties/>
+  <testcase name="snapshot and restore round-trips counts()" classname="com.vboard.core.suggest.UserHistoryTest$Serialization" time="0.003"/>
+  <testcase name="round-trip preserves recency order for later eviction()" classname="com.vboard.core.suggest.UserHistoryTest$Serialization" time="0.0"/>
+  <testcase name="restore honors maxEntries()" classname="com.vboard.core.suggest.UserHistoryTest$Serialization" time="0.001"/>
+  <testcase name="snapshot has one entry per line in the documented format()" classname="com.vboard.core.suggest.UserHistoryTest$Serialization" time="0.001"/>
+  <testcase name="restore ignores malformed lines()" classname="com.vboard.core.suggest.UserHistoryTest$Serialization" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

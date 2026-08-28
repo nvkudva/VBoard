@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="wordsWithPrefix" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:24.723Z" hostname="vm" time="0.005">
+  <properties/>
+  <testcase name="is case-insensitive on the prefix()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.0"/>
+  <testcase name="respects the limit()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.0"/>
+  <testcase name="empty prefix yields the most frequent words overall()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.0"/>
+  <testcase name="returns empty for unknown prefix or non-positive limit()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.0"/>
+  <testcase name="ranks matches by frequency descending()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.001"/>
+  <testcase name="score carries the raw frequency()" classname="com.vboard.core.suggest.LexiconTest$PrefixSearch" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
