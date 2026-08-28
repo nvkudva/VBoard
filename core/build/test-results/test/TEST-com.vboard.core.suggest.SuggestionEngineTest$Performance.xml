@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="performance" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-08-28T18:03:24.855Z" hostname="vm" time="0.411">
-  <properties/>
-  <testcase name="median suggest latency stays under 50ms on the bundled lexicon()" classname="com.vboard.core.suggest.SuggestionEngineTest$Performance" time="0.411"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
