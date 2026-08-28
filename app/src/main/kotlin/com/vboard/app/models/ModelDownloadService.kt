@@ -88,7 +88,7 @@ class ModelDownloadService : LifecycleService() {
             val result = app.packInstaller.install(pack) { state ->
                 publish(packId, state)
                 if (state is PackState.Downloading) {
-                    updateNotification(pack.displayName, state.fraction)
+                    updateNotification(pack.displayName, state.fraction.toFloat())
                 }
             }
             publish(packId, result)

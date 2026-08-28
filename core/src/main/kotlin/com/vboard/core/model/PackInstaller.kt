@@ -9,7 +9,10 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.DigestOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Resumable, checksum-verified downloader/installer for [ModelPack]s.
@@ -29,6 +32,18 @@ class PackInstaller(
     private val fetcher: Fetcher,
     private val freeBytes: () -> Long = { Long.MAX_VALUE },
 ) {
+
+    /**
+     * One mutex per pack id: concurrent install() calls for the same pack would
+     * otherwise interleave writes into the same .part file and can activate a
+     * corrupt archive that passes its own (self-consistent) running digest
+     * (QA finding VB-QA-07). The second caller simply waits, then short-circuits
+     * on the Installed marker.
+     */
+    private val packLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun lockFor(pack: ModelPack): Mutex =
+        packLocks.computeIfAbsent(pack.id) { Mutex() }
 
     /** Current state derived from disk (marker files), safe to call anytime. */
     fun stateOf(pack: ModelPack): PackState {
@@ -50,7 +65,10 @@ class PackInstaller(
      * Coroutine cancellation yields [PackState.Failed] with [InstallError.CANCELLED]; partial
      * files are retained for resume.
      */
-    suspend fun install(pack: ModelPack, onState: (PackState) -> Unit = {}): PackState {
+    suspend fun install(pack: ModelPack, onState: (PackState) -> Unit = {}): PackState =
+        lockFor(pack).withLock { installLocked(pack, onState) }
+
+    private suspend fun installLocked(pack: ModelPack, onState: (PackState) -> Unit): PackState {
         if (stateOf(pack) == PackState.Installed) {
             onState(PackState.Installed)
             return PackState.Installed

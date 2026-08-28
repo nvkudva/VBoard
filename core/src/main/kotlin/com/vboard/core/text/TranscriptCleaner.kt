@@ -282,6 +282,8 @@ class TranscriptCleaner {
             when {
                 (w0 == "no" && w1 == "wait") || (w0 == "wait" && w1 == "no") ->
                     return Marker(i, w1Idx!!, strong = true, isScratch = false)
+                (w0 == "actually" && w1 == "no") && i > 0 ->
+                    return Marker(i, w1Idx!!, strong = true, isScratch = false)
                 (w0 == "i" && (w1 == "mean" || w1 == "meant")) && i > 0 ->
                     return Marker(i, w1Idx!!, strong = false, isScratch = false)
                 (w0 == "scratch" || w0 == "strike") && w1 == "that" && i > 0 ->
@@ -367,6 +369,8 @@ class TranscriptCleaner {
 
     private fun collapseRepetitions(tokens: List<Tok>): Pair<MutableList<Tok>, Int> {
         // First collapse repeated bigrams ("i want i want to"), then repeated words.
+        // Number-like words are NEVER collapsed: "five five five one two one two"
+        // is a phone number, not a stutter (VB-203: when uncertain, keep both).
         var collapsed = 0
         val afterBigrams = mutableListOf<Tok>()
         var i = 0
@@ -377,7 +381,8 @@ class TranscriptCleaner {
             val d = tokens.getOrNull(i + 3) as? Tok.Word
             if (a != null && b != null && c != null && d != null &&
                 a.text.equals(c.text, ignoreCase = true) &&
-                b.text.equals(d.text, ignoreCase = true)
+                b.text.equals(d.text, ignoreCase = true) &&
+                !a.text.isNumberLike() && !b.text.isNumberLike()
             ) {
                 afterBigrams.add(a); afterBigrams.add(b)
                 collapsed++
@@ -391,7 +396,8 @@ class TranscriptCleaner {
             val prev = out.lastOrNull()
             if (tok is Tok.Word && prev is Tok.Word &&
                 tok.text.equals(prev.text, ignoreCase = true) &&
-                tok.text.lowercase() !in INTENTIONAL_REPEATS
+                tok.text.lowercase() !in INTENTIONAL_REPEATS &&
+                !tok.text.isNumberLike()
             ) {
                 collapsed++
                 continue
@@ -427,8 +433,11 @@ class TranscriptCleaner {
         if (lastMeaningful is Tok.Word && wordCount >= MIN_WORDS_FOR_TERMINAL_PERIOD &&
             !lastMeaningful.text.endsWith("...")
         ) {
+            val firstWord = (tokens.firstOrNull { it is Tok.Word } as? Tok.Word)
+                ?.text?.lowercase()
+            val mark = if (firstWord in INTERROGATIVE_STARTERS) "?" else "."
             val insertAt = tokens.indexOfLast { it !is Tok.Break } + 1
-            tokens.add(insertAt, Tok.Punct("."))
+            tokens.add(insertAt, Tok.Punct(mark))
         }
         return tokens
     }
@@ -511,6 +520,12 @@ class TranscriptCleaner {
         private val MONTHS = setOf(
             "january", "february", "march", "april", "may", "june", "july",
             "august", "september", "october", "november", "december",
+        )
+
+        private val INTERROGATIVE_STARTERS = setOf(
+            "who", "what", "when", "where", "why", "how", "which", "whose", "whom",
+            "is", "are", "was", "were", "am", "do", "does", "did", "can", "could",
+            "will", "would", "should", "shall", "have", "has", "may", "might",
         )
 
         private const val ALIGN_WINDOW = 8

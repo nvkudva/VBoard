@@ -183,6 +183,15 @@ class SuggestionEngine(
             while (suggestions.size > MAX_SUGGESTIONS) suggestions.removeAt(suggestions.size - 1)
         }
 
+        // VB-306: what the user actually typed must always stay reachable in the
+        // strip (left slot = display index 1), even when three higher-scored
+        // candidates would otherwise fill it (VB-QA-09).
+        if (suggestions.none { it.text.equals(composing, ignoreCase = true) }) {
+            val at = minOf(1, suggestions.size)
+            suggestions.add(at, literal)
+            while (suggestions.size > MAX_SUGGESTIONS) suggestions.removeAt(suggestions.size - 1)
+        }
+
         return SuggestionResult(suggestions, autocorrect)
     }
 
@@ -212,6 +221,9 @@ class SuggestionEngine(
         if (!kind.allowsAutocorrect) return null
         if (!isCorrectableToken(composing)) return null
         if (isAllCaps(composing)) return null
+        // Internal capitals ("iPhone", "VBoard", "McDonald") signal deliberate
+        // input and gate autocorrect exactly like ALL-CAPS does (VB-QA-06).
+        if (composing.length > 1 && composing.drop(1).any { it.isUpperCase() }) return null
 
         // Lone lowercase "i" becomes "I" in free-form text.
         if (composing == "i" && kind == FieldKind.TEXT) {

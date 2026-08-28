@@ -31,7 +31,9 @@ class SuggestionEngineTest {
         @Test
         fun `completes a prefix to full lexicon words`() {
             val result = englishEngine().suggest(request("hel"))
-            assertTrue("hello" in texts(result), "expected hello in ${texts(result)}")
+            // Top slot completes the prefix; the typed literal keeps its slot (VB-306).
+            assertTrue("help" in texts(result), "expected help in ${texts(result)}")
+            assertTrue("hel" in texts(result), "expected literal hel in ${texts(result)}")
             assertTrue(result.suggestions.any { it.source == Suggestion.Source.COMPLETION })
         }
 
@@ -51,7 +53,7 @@ class SuggestionEngineTest {
         @Test
         fun `capitalized composing capitalizes suggestions`() {
             val result = englishEngine().suggest(request("Hel"))
-            assertTrue("Hello" in texts(result), "expected Hello in ${texts(result)}")
+            assertTrue("Help" in texts(result), "expected Help in ${texts(result)}")
             assertTrue(texts(result).all { it.first().isUpperCase() })
         }
 
