@@ -1,0 +1,627 @@
+package com.vboard.app.onboarding
+
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.vboard.app.R
+import com.vboard.core.model.InstallError
+import com.vboard.core.model.ModelCatalog
+import com.vboard.core.model.ModelPack
+import com.vboard.core.model.PackInstaller
+import com.vboard.core.model.PackState
+import kotlinx.coroutines.delay
+import java.util.Locale
+
+/** The linear onboarding steps, in order. */
+enum class OnboardingStep { WELCOME, ENABLE, SELECT, MIC, MODELS, DONE }
+
+/**
+ * Live per-pack state for the UI: transient states (downloading/verifying) come
+ * from the service; terminal states are re-derived from disk so they stay
+ * correct across process restarts and deletions.
+ */
+internal fun effectivePackState(
+    installer: PackInstaller,
+    pack: ModelPack,
+    serviceState: PackState?,
+): PackState = when (serviceState) {
+    is PackState.Downloading -> serviceState
+    PackState.Verifying -> PackState.Verifying
+    is PackState.Failed ->
+        if (installer.stateOf(pack) == PackState.Installed) PackState.Installed else serviceState
+    else -> installer.stateOf(pack)
+}
+
+internal fun formatBytes(bytes: Long): String =
+    if (bytes >= 1_000_000_000L) {
+        String.format(Locale.US, "%.1f GB", bytes / 1_000_000_000.0)
+    } else {
+        "${bytes / 1_000_000L} MB"
+    }
+
+internal fun installErrorText(error: InstallError): String = when (error) {
+    InstallError.NETWORK -> "Download interrupted. Check your connection and retry."
+    InstallError.CHECKSUM_MISMATCH -> "The downloaded file didn't verify. Retry to download it again."
+    InstallError.INSUFFICIENT_STORAGE -> "Not enough free storage. Free up space and retry."
+    InstallError.CANCELLED -> "Download cancelled."
+    InstallError.IO -> "Couldn't save the model to storage. Retry."
+}
+
+@Composable
+fun OnboardingFlow(
+    step: OnboardingStep,
+    imeEnabled: Boolean,
+    imeSelected: Boolean,
+    micGranted: Boolean,
+    packStates: Map<String, PackState>,
+    onStepChange: (OnboardingStep) -> Unit,
+    onOpenImeSettings: () -> Unit,
+    onShowImePicker: () -> Unit,
+    onRecheckSystemState: () -> Unit,
+    onMicResult: (Boolean) -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onDownloadPack: (String) -> Unit,
+    onCancelDownloads: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onFinished: () -> Unit,
+) {
+    val requiredInstalled = ModelCatalog.packs
+        .filter { it.required }
+        .all { packStates[it.id] == PackState.Installed }
+    val completed = buildSet {
+        if (step != OnboardingStep.WELCOME) add(OnboardingStep.WELCOME)
+        if (imeEnabled) add(OnboardingStep.ENABLE)
+        if (imeSelected) add(OnboardingStep.SELECT)
+        if (micGranted) add(OnboardingStep.MIC)
+        if (requiredInstalled) add(OnboardingStep.MODELS)
+        if (step == OnboardingStep.DONE) add(OnboardingStep.DONE)
+    }
+    Scaffold { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+        ) {
+            StepDots(
+                current = step,
+                completed = completed,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, bottom = 8.dp),
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                when (step) {
+                    OnboardingStep.WELCOME -> WelcomeStep(
+                        onContinue = { onStepChange(OnboardingStep.ENABLE) },
+                    )
+                    OnboardingStep.ENABLE -> EnableStep(
+                        imeEnabled = imeEnabled,
+                        onOpenImeSettings = onOpenImeSettings,
+                        onContinue = { onStepChange(OnboardingStep.SELECT) },
+                    )
+                    OnboardingStep.SELECT -> SelectStep(
+                        imeSelected = imeSelected,
+                        onShowImePicker = onShowImePicker,
+                        onRecheck = onRecheckSystemState,
+                        onContinue = { onStepChange(OnboardingStep.MIC) },
+                    )
+                    OnboardingStep.MIC -> MicStep(
+                        micGranted = micGranted,
+                        onMicResult = onMicResult,
+                        onOpenAppSettings = onOpenAppSettings,
+                        onSkip = { onStepChange(OnboardingStep.MODELS) },
+                        onContinue = { onStepChange(OnboardingStep.MODELS) },
+                    )
+                    OnboardingStep.MODELS -> ModelsStep(
+                        packStates = packStates,
+                        requiredInstalled = requiredInstalled,
+                        onDownloadPack = onDownloadPack,
+                        onCancelDownloads = onCancelDownloads,
+                        onFinish = { onStepChange(OnboardingStep.DONE) },
+                    )
+                    OnboardingStep.DONE -> DoneStep(
+                        onOpenSettings = onOpenSettings,
+                        onClose = onFinished,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------- stepper
+
+@Composable
+private fun StepDots(
+    current: OnboardingStep,
+    completed: Set<OnboardingStep>,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OnboardingStep.entries.forEach { s ->
+            val isCurrent = s == current
+            val isDone = s in completed
+            val color = if (isDone || isCurrent) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 5.dp)
+                    .size(if (isCurrent) 14.dp else 12.dp)
+                    .background(color = color, shape = CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isDone) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(9.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------- step chrome
+
+@Composable
+private fun StepScaffold(
+    icon: ImageVector,
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(48.dp),
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { heading() },
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(28.dp))
+        content()
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun StatusCaption(text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text = text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+// -------------------------------------------------------------------- steps
+
+@Composable
+private fun WelcomeStep(onContinue: () -> Unit) {
+    StepScaffold(
+        icon = Icons.Filled.GraphicEq,
+        title = "Type with your voice.",
+        body = "Voice-first typing. Private by design.\n\n" +
+            "VBoard turns speech into clean, punctuated text — entirely on your phone. " +
+            "Nothing you say ever leaves your device.",
+    ) {
+        Button(
+            onClick = onContinue,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.onboarding_get_started))
+        }
+    }
+}
+
+@Composable
+private fun EnableStep(
+    imeEnabled: Boolean,
+    onOpenImeSettings: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    StepScaffold(
+        icon = Icons.Filled.Keyboard,
+        title = "Turn on VBoard",
+        body = "Android needs you to enable new keyboards in Settings. " +
+            "We'll take you there — just switch on VBoard.",
+    ) {
+        if (imeEnabled) {
+            StatusCaption("VBoard is enabled.")
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_continue))
+            }
+        } else {
+            Button(
+                onClick = onOpenImeSettings,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_open_keyboard_settings))
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "VBoard isn't enabled yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectStep(
+    imeSelected: Boolean,
+    onShowImePicker: () -> Unit,
+    onRecheck: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    // The IME picker is a system dialog that may not pause this activity, so
+    // poll the current-keyboard setting while this step is visible.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000)
+            onRecheck()
+        }
+    }
+    StepScaffold(
+        icon = Icons.Filled.TouchApp,
+        title = "Make VBoard your keyboard",
+        body = "Choose VBoard as your current keyboard. You can switch back anytime " +
+            "from the keyboard icon in your navigation bar.",
+    ) {
+        if (imeSelected) {
+            StatusCaption("VBoard is your current keyboard.")
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_continue))
+            }
+        } else {
+            Button(
+                onClick = onShowImePicker,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_choose_vboard))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MicStep(
+    micGranted: Boolean,
+    onMicResult: (Boolean) -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onSkip: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    var wasDenied by rememberSaveable { mutableStateOf(false) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) wasDenied = true
+        onMicResult(granted)
+    }
+    StepScaffold(
+        icon = Icons.Filled.Mic,
+        title = "Let VBoard hear you",
+        body = "Voice typing needs the microphone. Audio is processed on this device " +
+            "and never recorded, stored, or uploaded.",
+    ) {
+        if (micGranted) {
+            StatusCaption("Microphone access granted.")
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_continue))
+            }
+        } else {
+            Button(
+                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_allow_mic))
+            }
+            if (wasDenied) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "No problem — you can still type. To use voice later, allow the " +
+                        "microphone in Settings → Apps → VBoard → Permissions.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onOpenAppSettings,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.onboarding_open_app_settings))
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onSkip) {
+                Text(stringResource(R.string.onboarding_not_now))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelsStep(
+    packStates: Map<String, PackState>,
+    requiredInstalled: Boolean,
+    onDownloadPack: (String) -> Unit,
+    onCancelDownloads: () -> Unit,
+    onFinish: () -> Unit,
+) {
+    StepScaffold(
+        icon = Icons.Filled.CloudDownload,
+        title = "Download the voice engine",
+        body = "VBoard needs about 1 GB of models for speech recognition. " +
+            "Download once, then everything works offline.",
+    ) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = "Large download — Wi-Fi recommended. With the optional Smart cleanup " +
+                    "model the full set is about 1.4 GB.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        ModelCatalog.packs.forEach { pack ->
+            PackRow(
+                pack = pack,
+                state = packStates[pack.id] ?: PackState.NotInstalled,
+                onDownload = { onDownloadPack(pack.id) },
+                onCancel = onCancelDownloads,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = onFinish,
+            enabled = requiredInstalled,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.onboarding_finish))
+        }
+        if (!requiredInstalled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "The two transcription models are required for voice typing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PackRow(
+    pack: ModelPack,
+    state: PackState,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = pack.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = if (pack.required) {
+                            formatBytes(pack.totalBytes)
+                        } else {
+                            "Optional · ${formatBytes(pack.totalBytes)}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                PackStateChip(state)
+            }
+            when (state) {
+                is PackState.Downloading -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val percent = (state.fraction * 100).toInt()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(
+                            progress = { state.fraction.toFloat() },
+                            modifier = Modifier
+                                .weight(1f)
+                                .semantics { stateDescription = "Downloading, $percent percent" },
+                        )
+                        IconButton(onClick = onCancel) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.pack_cancel),
+                            )
+                        }
+                    }
+                }
+                PackState.Verifying -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                is PackState.Failed -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = installErrorText(state.error),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = onDownload) {
+                        Text(stringResource(R.string.pack_retry))
+                    }
+                }
+                PackState.NotInstalled -> {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(onClick = onDownload) {
+                        Text(stringResource(R.string.pack_download))
+                    }
+                }
+                PackState.Installed -> {
+                    // The chip already shows the installed checkmark.
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PackStateChip(state: PackState) {
+    val label = when (state) {
+        PackState.NotInstalled -> stringResource(R.string.pack_not_installed)
+        is PackState.Downloading ->
+            stringResource(R.string.pack_downloading_percent, (state.fraction * 100).toInt())
+        PackState.Verifying -> stringResource(R.string.pack_verifying)
+        PackState.Installed -> stringResource(R.string.pack_installed)
+        is PackState.Failed -> stringResource(R.string.pack_failed)
+    }
+    AssistChip(
+        onClick = {},
+        label = { Text(label) },
+        leadingIcon = if (state == PackState.Installed) {
+            {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        } else {
+            null
+        },
+    )
+}
+
+@Composable
+private fun DoneStep(
+    onOpenSettings: () -> Unit,
+    onClose: () -> Unit,
+) {
+    StepScaffold(
+        icon = Icons.Filled.CheckCircle,
+        title = "You're all set.",
+        body = "Tap the mic key anytime to start talking. " +
+            "VBoard cleans up your words as you speak — all on-device.",
+    ) {
+        Button(
+            onClick = onOpenSettings,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.onboarding_open_settings))
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        TextButton(onClick = onClose) {
+            Text(stringResource(R.string.onboarding_close))
+        }
+    }
+}

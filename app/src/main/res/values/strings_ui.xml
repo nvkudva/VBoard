@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Onboarding -->
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_finish">Finish</string>
+    <string name="onboarding_not_now">Not now</string>
+    <string name="onboarding_open_keyboard_settings">Open keyboard settings</string>
+    <string name="onboarding_choose_vboard">Choose VBoard</string>
+    <string name="onboarding_allow_mic">Allow microphone</string>
+    <string name="onboarding_open_app_settings">Open app settings</string>
+    <string name="onboarding_open_settings">Open VBoard settings</string>
+    <string name="onboarding_close">Close</string>
+
+    <!-- Model packs (shared by onboarding + settings) -->
+    <string name="pack_download">Download</string>
+    <string name="pack_retry">Retry</string>
+    <string name="pack_delete">Delete</string>
+    <string name="pack_cancel">Cancel download</string>
+    <string name="pack_installed">Installed</string>
+    <string name="pack_verifying">Verifying…</string>
+    <string name="pack_not_installed">Not downloaded</string>
+    <string name="pack_failed">Failed</string>
+    <string name="pack_downloading_percent">Downloading %1$d%%</string>
+
+    <!-- Settings -->
+    <string name="settings_back">Back</string>
+    <string name="settings_group_typing">Typing</string>
+    <string name="settings_group_voice">Voice typing</string>
+    <string name="settings_group_models">Models</string>
+    <string name="settings_group_about">About &amp; privacy</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_key_preview">Key preview popups</string>
+    <string name="settings_auto_cap">Auto-capitalize</string>
+    <string name="settings_double_space">Double-space period</string>
+    <string name="settings_suggestions">Show suggestions</string>
+    <string name="settings_autocorrect">Autocorrect</string>
+    <string name="dialog_cancel">Cancel</string>
+</resources>
