@@ -16,3 +16,6 @@ captures/
 
 # Kotlin compiler session scratch files
 .kotlin/
+
+# Agent worktrees (transient)
+.claude/
