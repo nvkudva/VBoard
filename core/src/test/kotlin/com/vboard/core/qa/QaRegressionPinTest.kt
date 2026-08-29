@@ -85,22 +85,26 @@ class QaRegressionPinTest {
     }
 
     @Test
-    fun `VB-QA-05 idempotency holds everywhere except the three documented inputs`() {
-        // The known breakers, pinned as they behave today. The spec-correct
-        // assertion is the @Disabled test in CleanupPropertyTest.
-        val breakers = listOf(
+    fun `VB-QA-05 idempotency holds everywhere except the one documented input`() {
+        // Two of the three original breakers are closed: the "no wait" marker now
+        // requires i > 0, so the stacked form stops eating its own leftover, and
+        // adjacent breaks are merged before rendering, so "\n\n\n" is never emitted.
+        for (input in listOf(
             "no wait no wait no wait no wait no wait",
-            "scratch that scratch that",
             "new line new line new line",
-        )
-        var differed = 0
-        for (input in breakers) {
+        )) {
             val once = clean(input).text
-            if (clean(once).text != once) differed++
+            assertEquals(once, clean(once).text, "not idempotent for <$input>")
         }
-        assertEquals(
-            breakers.size, differed,
-            "an idempotency breaker started passing - re-enable the @Disabled test in CleanupPropertyTest",
+        // The one that remains: repetition collapse turns it into the bare phrase,
+        // and re-cleaning that hits detectUtteranceCommand, so the second pass
+        // returns a SCRATCH_THAT command instead of the text. On the VB-124
+        // double-cleanup fallback path that would delete a committed utterance.
+        val breaker = "scratch that scratch that"
+        val once = clean(breaker).text
+        assertTrue(
+            clean(once).text != once,
+            "<$breaker> started passing - re-enable the @Disabled test in CleanupPropertyTest",
         )
         // Everything ordinary is idempotent.
         for (input in listOf(

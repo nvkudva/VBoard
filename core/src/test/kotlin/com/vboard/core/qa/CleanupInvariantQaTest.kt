@@ -264,6 +264,7 @@ class CleanupInvariantQaTest {
             assertEquals(0, result.fillersRemoved)
             assertEquals(0, result.correctionsResolved)
             assertEquals(0, result.repetitionsCollapsed)
+            assertEquals(0, result.spokenSubstitutions)
         }
     }
 
@@ -280,6 +281,7 @@ class CleanupInvariantQaTest {
                 "fillersRemoved" to result.fillersRemoved,
                 "correctionsResolved" to result.correctionsResolved,
                 "repetitionsCollapsed" to result.repetitionsCollapsed,
+                "spokenSubstitutions" to result.spokenSubstitutions,
             )) {
                 assertTrue(n >= 0, "$name negative for <$input>")
                 assertTrue(n <= words, "$name=$n exceeds the $words words in <$input>")
@@ -319,23 +321,20 @@ class CleanupInvariantQaTest {
     // ------------------- VB-QA-29: allowsAutoCapitalize gates only the first word
 
     @Test
-    fun `fields that disallow auto-capitalization still capitalize after a period or break (pinned)`() {
-        // FieldKind.allowsAutoCapitalize is consulted exactly once, by
-        // sentenceStartsAt (TranscriptCleaner.kt:445), which only decides whether
-        // the FIRST word starts a sentence. capitalize() then walks the rest of the
-        // token list and capitalizes after every "." "!" "?" and every break,
-        // regardless of field kind — including in a PASSWORD field, which the spec
-        // says must be left alone entirely.
+    fun `fields that disallow auto-capitalization are left alone at every position (pinned)`() {
+        // FieldKind.allowsAutoCapitalize used to be consulted only by
+        // sentenceStartsAt, which decides the FIRST word; capitalize() then re-armed
+        // at every "." "!" "?" and every break regardless of field kind — including
+        // in a PASSWORD field, which the spec says must be left alone entirely. The
+        // field kind now gates the whole pass.
         for (kind in listOf(FieldKind.EMAIL, FieldKind.URI, FieldKind.PASSWORD, FieldKind.NUMBER)) {
-            assertEquals("hello. World here", clean("hello. world here", fieldKind = kind).text, "for $kind")
-            assertEquals("hello\nWorld here", clean("hello new line world here", fieldKind = kind).text, "for $kind")
-            // The first word is correctly left alone, which is what hid this.
+            assertEquals("hello. world here", clean("hello. world here", fieldKind = kind).text, "for $kind")
+            assertEquals("hello\nworld here", clean("hello new line world here", fieldKind = kind).text, "for $kind")
             assertEquals("hello world here", clean("hello world here", fieldKind = kind).text, "for $kind")
         }
     }
 
     @Test
-    @org.junit.jupiter.api.Disabled("VB-QA-29: FieldKind.allowsAutoCapitalize only gates the first word; capitalize() capitalizes after every sentence ender and every break in EMAIL, URI, PASSWORD and NUMBER fields too")
     fun `fields that disallow auto-capitalization are never capitalized by cleanup`() {
         for (kind in listOf(FieldKind.EMAIL, FieldKind.URI, FieldKind.PASSWORD, FieldKind.NUMBER)) {
             assertEquals("hello. world here", clean("hello. world here", fieldKind = kind).text, "for $kind")
@@ -357,22 +356,22 @@ class CleanupInvariantQaTest {
     // -------------------------------- VB-QA-30: adjacent breaks are never merged
 
     @Test
-    fun `three or more consecutive breaks are emitted and then collapse on re-clean (pinned)`() {
-        // Tokenizer.render writes each Break verbatim and normalizePunctuationSequence
-        // does not look at Break tokens at all, so N spoken line breaks produce N
-        // newlines. Re-tokenizing that output merges them back to two, which is the
-        // mechanism behind the VB-QA-05 idempotency failure for "\n\n\n".
+    fun `consecutive breaks are merged before rendering (pinned)`() {
+        // Tokenizer.render writes each Break verbatim, so N spoken line breaks used
+        // to produce N newlines; re-tokenizing that output merged them back to two,
+        // which was the mechanism behind the VB-QA-05 idempotency failure for "\n\n\n".
+        // normalizePunctuationSequence now merges the run, so the output is what
+        // re-tokenizing it would produce.
         val once = clean("hello new paragraph new line world").text
-        assertEquals("Hello\n\n\nWorld", once)
-        assertEquals("Hello\n\nWorld", clean(once).text)
-        assertEquals("Hello\n\n\nWorld", clean("hello new line new line new line world").text)
-        // Literal breaks in the transcript are capped at two, so only the spoken
-        // path can produce three.
+        assertEquals("Hello\n\nWorld", once)
+        assertEquals(once, clean(once).text)
+        assertEquals("Hello\n\nWorld", clean("hello new line new line new line world").text)
+        // Literal breaks in the transcript are capped at two by the tokenizer, and
+        // the spoken path now agrees with it.
         assertEquals("A\n\nB", clean("a\n\n\n\nb").text)
     }
 
     @Test
-    @org.junit.jupiter.api.Disabled("VB-QA-30: Tokenizer.render emits adjacent Break tokens verbatim, so spoken line breaks can produce 3+ consecutive newlines that re-tokenize to 2 - a self-inflicted idempotency break (see also VB-QA-05)")
     fun `consecutive breaks should be normalized to at most a paragraph`() {
         assertEquals("Hello\n\nWorld", clean("hello new paragraph new line world").text)
         assertEquals("Hello\n\nWorld", clean("hello new line new line new line world").text)
@@ -381,13 +380,14 @@ class CleanupInvariantQaTest {
     // ------------------- VB-QA-31: "..." is not treated as a sentence terminator
 
     @Test
-    fun `an ellipsis does not absorb a following period or comma (pinned)`() {
-        // normalizePunctuationSequence (TranscriptCleaner.kt:413) collapses two
-        // *identical* adjacent Punct tokens and drops a comma after a member of
-        // SENTENCE_ENDERS. "..." is neither identical to "." nor a member of
-        // SENTENCE_ENDERS, so both stack visibly.
-        assertEquals("Tell me,... and go.", clean("tell me comma ellipsis and go").text)
-        assertEquals("Tell me.... And go.", clean("tell me ellipsis period and go").text)
+    fun `an ellipsis absorbs an adjacent period or comma (pinned)`() {
+        // normalizePunctuationSequence collapses two *identical* adjacent Punct
+        // tokens and drops a comma after a member of SENTENCE_ENDERS. "..." is
+        // neither, so both used to stack visibly; it now absorbs them explicitly.
+        // "..." stays out of SENTENCE_ENDERS: that set also drives capitalization,
+        // and "and" below must stay lowercase.
+        assertEquals("Tell me... and go.", clean("tell me comma ellipsis and go").text)
+        assertEquals("Tell me... and go.", clean("tell me ellipsis period and go").text)
         // A trailing ellipsis is correctly left alone (ensureTerminalPeriod only
         // fires when the last meaningful token is a Word), so the defect is
         // confined to an ellipsis with punctuation after it.
@@ -395,7 +395,6 @@ class CleanupInvariantQaTest {
     }
 
     @Test
-    @org.junit.jupiter.api.Disabled("VB-QA-31: '...' is absent from SENTENCE_ENDERS and is not equal to '.', so normalizePunctuationSequence stacks a comma or a period onto it and ensureTerminalPeriod appends a fourth dot")
     fun `an ellipsis should terminate a sentence like any other terminator`() {
         assertEquals("Tell me... and go.", clean("tell me comma ellipsis and go").text)
         assertEquals("Tell me... and go.", clean("tell me ellipsis period and go").text)

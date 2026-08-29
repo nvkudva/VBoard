@@ -33,8 +33,11 @@ class TranscriptCleaner {
 
         detectUtteranceCommand(tokens)?.let { return CleanupResult("", command = it) }
 
+        var spokenSubstitutions = 0
         if (options.spokenCommands) {
-            tokens = applySpokenCommands(tokens)
+            val (result, substituted) = applySpokenCommands(tokens)
+            tokens = result
+            spokenSubstitutions = substituted
         }
 
         var fillersRemoved = 0
@@ -71,7 +74,11 @@ class TranscriptCleaner {
             tokens = ensureTerminalPeriod(tokens)
         }
 
-        if (options.autoCapitalize && !options.rawMode) {
+        // The field kind gates the whole pass, not just its first word: capitalize()
+        // re-arms at every sentence ender and every break, so gating only the start
+        // still recased everything after a "." or a "\n" in an EMAIL, URI, PASSWORD
+        // or NUMBER field (VB-QA-29).
+        if (options.autoCapitalize && !options.rawMode && request.fieldKind.allowsAutoCapitalize) {
             capitalize(tokens, sentenceStartsAt(request.precedingText, request.fieldKind))
         } else {
             capitalizeStandaloneI(tokens)
@@ -82,6 +89,7 @@ class TranscriptCleaner {
             fillersRemoved = fillersRemoved,
             correctionsResolved = correctionsResolved,
             repetitionsCollapsed = repetitionsCollapsed,
+            spokenSubstitutions = spokenSubstitutions,
         )
     }
 
@@ -107,8 +115,9 @@ class TranscriptCleaner {
 
     // ---------------------------------------------------------------- stage 3
 
-    private fun applySpokenCommands(tokens: MutableList<Tok>): MutableList<Tok> {
+    private fun applySpokenCommands(tokens: MutableList<Tok>): Pair<MutableList<Tok>, Int> {
         val out = mutableListOf<Tok>()
+        var substitutions = 0
         var i = 0
         while (i < tokens.size) {
             val tok = tokens[i]
@@ -116,27 +125,56 @@ class TranscriptCleaner {
                 out.add(tok); i++; continue
             }
             val match = matchSpokenPhrase(tokens, i)
-            if (match != null) {
-                val (replacement, length, singleWordAmbiguous) = match
-                val prevWord = out.lastOrNull { it is Tok.Word } as? Tok.Word
-                val guarded = singleWordAmbiguous &&
-                    prevWord != null &&
-                    prevWord.text.lowercase() in DETERMINERS &&
-                    out.lastOrNull() === prevWord
-                if (guarded) {
-                    out.add(tok); i++
-                } else {
-                    out.add(replacement)
-                    i += length
-                }
+            if (match != null && conversionIsIntended(tokens, out, i, match)) {
+                out.add(match.replacement)
+                substitutions++
+                i += match.length
             } else {
                 out.add(tok); i++
             }
         }
-        return out
+        return out to substitutions
     }
 
-    private data class PhraseMatch(val replacement: Tok, val length: Int, val singleWordAmbiguous: Boolean)
+    /**
+     * Stage 3 matches on surface form alone, and every punctuation word is also an
+     * ordinary English word — "menstrual period tracking", "full stop the car",
+     * "on the next line item". Converting one of those deletes a word the user
+     * said, so three cheap signals have to agree first (VB-QA-18).
+     */
+    private fun conversionIsIntended(
+        tokens: List<Tok>,
+        out: List<Tok>,
+        start: Int,
+        match: PhraseMatch,
+    ): Boolean {
+        // (1) Nothing precedes an utterance-initial phrase, so there is no evidence
+        // it was meant as dictation — and it is the one position where a leading
+        // "." or "?" is dropped by normalizePunctuationSequence, losing the word
+        // without even leaving a symbol behind.
+        if (start == 0) return false
+
+        // (2) A determiner immediately before it makes it a noun phrase: "add a
+        // period at the end", "on the next line item". Multi-word phrases need this
+        // as much as single words do.
+        val prev = out.lastOrNull()
+        if (prev is Tok.Word && prev.text.lowercase() in DETERMINERS) return false
+
+        // (3) A sentence-splitting mark ends the clause before it, so it needs a
+        // plausible clause after it: the end of the utterance, a break or another
+        // spoken mark, or at least two more words. One trailing word is far more
+        // likely to be a noun ("period tracking") than a sentence. Inline marks and
+        // breaks read as a pause rather than a split, so they stop at signals 1-2.
+        val replacement = match.replacement
+        if (replacement !is Tok.Punct || replacement.text !in SENTENCE_ENDERS) return true
+        val after = start + match.length
+        val rest = tokens.subList(after, tokens.size)
+        if (rest.none { it is Tok.Word }) return true
+        if (rest.first() !is Tok.Word || matchSpokenPhrase(tokens, after) != null) return true
+        return rest.count { it is Tok.Word } >= 2
+    }
+
+    private data class PhraseMatch(val replacement: Tok, val length: Int)
 
     private fun matchSpokenPhrase(tokens: List<Tok>, start: Int): PhraseMatch? {
         fun wordAt(offset: Int): String? =
@@ -146,38 +184,39 @@ class TranscriptCleaner {
         val w1 = wordAt(1)
         val w2 = wordAt(2)
 
-        // Multi-word phrases: unambiguous, always converted.
+        // Multi-word phrases. Less ambiguous than the single words below, but not
+        // unambiguous — conversionIsIntended still has the final say.
         when {
-            w0 == "new" && w1 == "paragraph" -> return PhraseMatch(Tok.Break("\n\n"), 2, false)
-            w0 == "new" && w1 == "line" -> return PhraseMatch(Tok.Break("\n"), 2, false)
-            w0 == "next" && w1 == "line" -> return PhraseMatch(Tok.Break("\n"), 2, false)
-            w0 == "full" && w1 == "stop" -> return PhraseMatch(Tok.Punct("."), 2, false)
-            w0 == "question" && w1 == "mark" -> return PhraseMatch(Tok.Punct("?"), 2, false)
+            w0 == "new" && w1 == "paragraph" -> return PhraseMatch(Tok.Break("\n\n"), 2)
+            w0 == "new" && w1 == "line" -> return PhraseMatch(Tok.Break("\n"), 2)
+            w0 == "next" && w1 == "line" -> return PhraseMatch(Tok.Break("\n"), 2)
+            w0 == "full" && w1 == "stop" -> return PhraseMatch(Tok.Punct("."), 2)
+            w0 == "question" && w1 == "mark" -> return PhraseMatch(Tok.Punct("?"), 2)
             w0 == "exclamation" && (w1 == "mark" || w1 == "point") ->
-                return PhraseMatch(Tok.Punct("!"), 2, false)
-            w0 == "open" && (w1 == "quote" || w1 == "quotes") -> return PhraseMatch(Tok.Punct("\""), 2, false)
-            w0 == "close" && (w1 == "quote" || w1 == "quotes") -> return PhraseMatch(Tok.Punct("\""), 2, false)
-            w0 == "open" && (w1 == "paren" || w1 == "parenthesis") -> return PhraseMatch(Tok.Punct("("), 2, false)
-            w0 == "close" && (w1 == "paren" || w1 == "parenthesis") -> return PhraseMatch(Tok.Punct(")"), 2, false)
-            w0 == "at" && w1 == "sign" -> return PhraseMatch(Tok.Punct("@"), 2, false)
-            w0 == "percent" && w1 == "sign" -> return PhraseMatch(Tok.Punct("%"), 2, false)
-            w0 == "dot" && w1 == "dot" && w2 == "dot" -> return PhraseMatch(Tok.Punct("..."), 3, false)
+                return PhraseMatch(Tok.Punct("!"), 2)
+            w0 == "open" && (w1 == "quote" || w1 == "quotes") -> return PhraseMatch(Tok.Punct("\""), 2)
+            w0 == "close" && (w1 == "quote" || w1 == "quotes") -> return PhraseMatch(Tok.Punct("\""), 2)
+            w0 == "open" && (w1 == "paren" || w1 == "parenthesis") -> return PhraseMatch(Tok.Punct("("), 2)
+            w0 == "close" && (w1 == "paren" || w1 == "parenthesis") -> return PhraseMatch(Tok.Punct(")"), 2)
+            w0 == "at" && w1 == "sign" -> return PhraseMatch(Tok.Punct("@"), 2)
+            w0 == "percent" && w1 == "sign" -> return PhraseMatch(Tok.Punct("%"), 2)
+            w0 == "dot" && w1 == "dot" && w2 == "dot" -> return PhraseMatch(Tok.Punct(ELLIPSIS), 3)
         }
 
-        // Single-word punctuation: ambiguous with real words, so guarded by a
-        // preceding determiner ("add a comma" keeps the word "comma").
+        // Single-word punctuation. "hashtag" is deliberately absent: it is a common
+        // noun ("use hashtag now", "a hashtag for it") and nobody dictates the bare
+        // symbol, so there is no conversion here worth the false positives (VB-QA-18).
         val single = when (w0) {
             "period" -> "."
             "comma" -> ","
             "colon" -> ":"
             "semicolon" -> ";"
             "hyphen", "dash" -> "-"
-            "ellipsis" -> "..."
+            "ellipsis" -> ELLIPSIS
             "ampersand" -> "&"
-            "hashtag" -> "#"
             else -> null
         } ?: return null
-        return PhraseMatch(Tok.Punct(single), 1, true)
+        return PhraseMatch(Tok.Punct(single), 1)
     }
 
     // ---------------------------------------------------------------- stage 4
@@ -242,7 +281,7 @@ class TranscriptCleaner {
         var guard = 0
         while (guard++ < 4) { // resolve at most a few corrections per utterance
             val marker = findMarker(work) ?: break
-            val (start, end, strong, isScratch) = marker
+            val (start, end, strong) = marker
             val headIdx = nextWordIndex(work, end + 1)
             if (headIdx == null) {
                 // Marker at end of utterance: "…to john, no wait" — drop marker only.
@@ -261,12 +300,6 @@ class TranscriptCleaner {
                     resolved++
                     (work.subList(0, alignIdx) + work.subList(headIdx, work.size)).toMutableList()
                 }
-                isScratch -> {
-                    // "…tell him about it scratch that forget it": drop back to clause start
-                    resolved++
-                    val clauseStart = clauseStartBefore(work, start)
-                    (work.subList(0, clauseStart) + work.subList(headIdx, work.size)).toMutableList()
-                }
                 strong -> {
                     resolved++
                     (work.subList(0, start) + work.subList(headIdx, work.size)).toMutableList()
@@ -278,7 +311,7 @@ class TranscriptCleaner {
         return work to resolved
     }
 
-    private data class Marker(val start: Int, val end: Int, val strong: Boolean, val isScratch: Boolean)
+    private data class Marker(val start: Int, val end: Int, val strong: Boolean)
 
     private fun findMarker(tokens: List<Tok>): Marker? {
         var i = 0
@@ -288,18 +321,26 @@ class TranscriptCleaner {
             val w1 = (nextWordAfter(tokens, i))?.second
             val w1Idx = nextWordAfter(tokens, i)?.first
             when {
-                (w0 == "no" && w1 == "wait") || (w0 == "wait" && w1 == "no") ->
-                    return Marker(i, w1Idx!!, strong = true, isScratch = false)
+                // Every marker requires i > 0: a correction has to have something
+                // before it to correct. "no wait" was the one exception, which made
+                // an utterance that merely opens with it lose its first two words
+                // ("no wait for me" -> "For me", VB-QA-20).
+                ((w0 == "no" && w1 == "wait") || (w0 == "wait" && w1 == "no")) && i > 0 ->
+                    return Marker(i, w1Idx!!, strong = true)
                 (w0 == "actually" && w1 == "no") && i > 0 ->
-                    return Marker(i, w1Idx!!, strong = true, isScratch = false)
+                    return Marker(i, w1Idx!!, strong = true)
                 (w0 == "i" && (w1 == "mean" || w1 == "meant")) && i > 0 ->
-                    return Marker(i, w1Idx!!, strong = false, isScratch = false)
+                    return Marker(i, w1Idx!!, strong = false)
+                // "scratch that" is ordinary English far more often than it is a
+                // command ("i need to scratch that itch"), so mid-utterance it only
+                // acts when the replacement aligns with something already said
+                // (VB-QA-19). The whole-utterance form stays a command, in stage 2.
                 (w0 == "scratch" || w0 == "strike") && w1 == "that" && i > 0 ->
-                    return Marker(i, w1Idx!!, strong = true, isScratch = true)
+                    return Marker(i, w1Idx!!, strong = false)
                 w0 == "make" && w1 == "that" && i > 0 ->
-                    return Marker(i, w1Idx!!, strong = false, isScratch = false)
+                    return Marker(i, w1Idx!!, strong = false)
                 (w0 == "sorry" || w0 == "rather") && i > 0 ->
-                    return Marker(i, i, strong = false, isScratch = false)
+                    return Marker(i, i, strong = false)
             }
             i++
         }
@@ -362,17 +403,6 @@ class TranscriptCleaner {
         else -> null
     }
 
-    private fun clauseStartBefore(tokens: List<Tok>, index: Int): Int {
-        var j = index - 1
-        while (j >= 0) {
-            val t = tokens[j]
-            if (t is Tok.Break) return j + 1
-            if (t is Tok.Punct && (t.text in SENTENCE_ENDERS || t.text == ",")) return j + 1
-            j--
-        }
-        return 0
-    }
-
     // ---------------------------------------------------------------- stage 7
 
     private fun collapseRepetitions(tokens: List<Tok>): Pair<MutableList<Tok>, Int> {
@@ -417,14 +447,29 @@ class TranscriptCleaner {
 
     // ---------------------------------------------------------------- stage 8
 
-    /** Collapses doubled punctuation and drops leading punctuation after edits. */
+    /** Collapses doubled punctuation and breaks, and drops leading punctuation after edits. */
     private fun normalizePunctuationSequence(tokens: MutableList<Tok>): MutableList<Tok> {
         val out = mutableListOf<Tok>()
         for (tok in tokens) {
             val prev = out.lastOrNull()
+            // Adjacent breaks are a paragraph, not N blank lines. Two spoken breaks
+            // used to render as "\n\n\n", which re-tokenizes to "\n\n" — the pipeline
+            // producing text it cannot reproduce (VB-QA-30, and one cause of VB-QA-05).
+            // Same "count >= 2 means paragraph" rule the tokenizer applies to literals.
+            if (tok is Tok.Break && prev is Tok.Break) {
+                out[out.size - 1] = Tok.Break("\n\n")
+                continue
+            }
             if (tok is Tok.Punct && prev is Tok.Punct && prev.text == tok.text && tok.text != "\"") continue
+            // "..." already closes the clause, so a comma or period stacked onto it is
+            // redundant, in either order (VB-QA-31). It is deliberately not a member of
+            // SENTENCE_ENDERS: that set also drives capitalization and alignment, where
+            // an ellipsis is mid-sentence ("one more thing... the demo needs music").
+            if (tok is Tok.Punct && prev is Tok.Punct && prev.text == ELLIPSIS && tok.text in ELLIPSIS_ABSORBS) continue
             if (tok is Tok.Punct && tok.text == "," && prev is Tok.Punct && prev.text in SENTENCE_ENDERS) continue
-            if (tok is Tok.Punct && tok.text in SENTENCE_ENDERS && prev is Tok.Punct && prev.text == ",") {
+            if (tok is Tok.Punct && (tok.text in SENTENCE_ENDERS || tok.text == ELLIPSIS) &&
+                prev is Tok.Punct && prev.text == ","
+            ) {
                 out.removeAt(out.size - 1)
             }
             out.add(tok)
@@ -535,6 +580,11 @@ class TranscriptCleaner {
         )
 
         private val SENTENCE_ENDERS = setOf(".", "!", "?")
+
+        private const val ELLIPSIS = "..."
+
+        /** Punctuation an ellipsis swallows when the two end up adjacent (VB-QA-31). */
+        private val ELLIPSIS_ABSORBS = setOf(".", ",")
 
         /**
          * Sentence terminators across the writing systems VBoard claims to support.

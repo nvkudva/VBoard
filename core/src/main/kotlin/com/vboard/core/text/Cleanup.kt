@@ -63,4 +63,10 @@ data class CleanupResult(
     val fillersRemoved: Int = 0,
     val correctionsResolved: Int = 0,
     val repetitionsCollapsed: Int = 0,
+    /**
+     * Spoken punctuation words replaced by their symbol ("comma" -> ","). Stage 3
+     * deletes a word the user said, so it needs a disclosure counter of its own;
+     * it counts substitutions only and never records which ones.
+     */
+    val spokenSubstitutions: Int = 0,
 )
