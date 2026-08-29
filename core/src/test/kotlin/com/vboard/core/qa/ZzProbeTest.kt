@@ -1,128 +1,89 @@
 package com.vboard.core.qa
 
-import com.vboard.core.clipboard.ClipClassifier
-import com.vboard.core.suggest.AutocorrectMode
-import com.vboard.core.suggest.Lexicon
-import com.vboard.core.suggest.SuggestionEngine
-import com.vboard.core.suggest.SuggestionRequest
 import com.vboard.core.text.CleanupOptions
 import com.vboard.core.text.CleanupRequest
-import com.vboard.core.text.CommitPlanner
 import com.vboard.core.text.FieldKind
+import com.vboard.core.text.TextDiff
 import com.vboard.core.text.TranscriptCleaner
 import org.junit.jupiter.api.Test
 
 class ZzProbeTest {
     private val cleaner = TranscriptCleaner()
 
-    private fun c(s: String, terminal: Boolean = true, opts: CleanupOptions = CleanupOptions()) =
-        cleaner.clean(CleanupRequest(s, "", FieldKind.TEXT, opts, terminal))
+    private fun c(s: String, pre: String = "", terminal: Boolean = true, opts: CleanupOptions = CleanupOptions()) =
+        cleaner.clean(CleanupRequest(s, pre, FieldKind.TEXT, opts, terminal))
 
     @Test
-    fun probeSelfCorrection() {
+    fun probeArtifacts() {
         val inputs = listOf(
-            "no wait for me", "no wait i am coming", "wait no i changed my mind",
-            "tell him i need to scratch that itch", "i need to scratch that",
-            "sorry about the delay", "sorry i am late for the meeting",
-            "rather than that we should go", "i would rather stay home",
-            "make that decision by friday", "we make that call every week",
-            "actually no i think you are right", "actually no",
-            "she said sorry to him", "please make that happen",
-            "the deal is off strike that we are back on",
-            "i mean what i say", "you know i mean business",
-            "call me at five no wait six",
-            "meet me monday scratch that tuesday",
+            "see [see attached] for details", "the [box] is here", "meet me at [the park] later",
+            "<unk> hello", "(noise) hello there", "[music] plays now",
+            "the [BOX] is here", "a [b1] here", "read [chapter one] now",
         )
-        for (i in inputs) { val r = c(i); println("P2_SC   |$i| -> |${r.text}| resolved=${r.correctionsResolved}") }
+        for (i in inputs) println("P3_ART  |$i| -> |${c(i).text}|")
     }
 
     @Test
-    fun probeSpokenCmd() {
-        val inputs = listOf(
-            "use hashtag now", "put comma here", "the period at the end of history",
-            "menstrual period tracking", "a colon and a semicolon", "use colon here",
-            "the dash cam footage", "press dash now", "the ampersand key",
-            "new line of thinking", "on the next line item", "full stop the car",
-            "question mark placement", "open quote unquote", "at sign up time",
-        )
-        for (i in inputs) println("P2_CMD  |$i| -> |${c(i).text}|")
+    fun probePreceding() {
+        val pres = listOf("abc.", "abc.\"", "abc.'", "abc.)", "abc…", "abc。", "abc！", "abc？", "abc؟", "abc।", "abc.  ", "")
+        for (p in pres) println("P3_PRE  |$p| -> |${c("hello there friend", pre = p).text}|")
     }
 
     @Test
-    fun probeUnicodeMore() {
+    fun probeDiff2() {
+        val cases = listOf(
+            "a👍" to "a👍🏽",
+            "aé" to "aé",
+            "a☺" to "a☺️",
+            "a👨‍👩" to "a👨",
+            "1️⃣" to "2️⃣",
+            "🇺🇸" to "🇺🇦",
+        )
+        for ((a, b) in cases) {
+            val r = TextDiff.replacement(a, b)
+            println("P3_DIFF |$a|(${a.length})->|$b|(${b.length}) keep=${r.keepPrefixLength} del=${r.deleteCount} ins=${r.insertText.length}ch")
+        }
+    }
+
+    @Test
+    fun probeSymbols2() {
         val inputs = listOf(
-            "مرحبا بالعالم اليوم", "שלום עולם שלי", "привет мир сегодня",
-            "‫هذا نص‬ عربي هنا", "test ‎ ltr mark here",
-            "ＦＵＬＬＷＩＤＴＨ ｔｅｘｔ ｈｅｒｅ", "١٢٣ ٤٥٦ ٧٨٩",
-            "á b́ ć", "𝐀𝐁 math bold",
-            "ǅungla test word", "ß straße here", "ﬁ ligature test",
-            "x".repeat(5000) + " end",
+            "it costs \$75 dollars", "the cost is €40", "£20 please now",
+            "a + b = c", "half is 1/2 cup", "under_score name here",
+            "C++ code here", "x^2 plus y", "5 * 3 equals", "a|b|c here",
+            "less < more > than", "star *bold* text", "back`tick here",
+            "path\\to\\file here", "R&D team meeting", "50% off today",
+            "email me at a_b@c.com", "temp is 20° today", "the ± range",
+            "he said “hi” loudly", "it's 3⁄4 done",
+        )
+        for (i in inputs) println("P3_SYM  |$i| -> |${c(i).text}|")
+    }
+
+    @Test
+    fun probeUni2() {
+        val nfd = "café is open now"
+        val nfc = "café is open now"
+        println("P3_U    NFD |$nfd| -> |${c(nfd).text}|")
+        println("P3_U    NFC |$nfc| -> |${c(nfc).text}|")
+        val inputs = listOf(
+            "hello 👋 world here",
+            "family 👨‍👩‍👧 today",
+            "flag 🇺🇸 here now",
+            "thumbs 👍🏽 up now",
+            "keycap 1️⃣ here now",
+            "check ✔️ mark now",
+            "math 𝐀𝐁 bold here",
+            "han 𠮷 char here",
+            "viet Việt Nam tiếng",
+            "viet Việt Nam tié̂ng",
+            "hindi नमस्ते दुनिया आज",
+            "thai สวัสดี โลก นี้",
         )
         for (i in inputs) {
             val o = c(i).text
-            println("P2_UNI  in=${i.length}ch |${i.take(40)}| -> out=${o.length}ch |${o.take(60)}|")
+            println("P3_U    in=${i.length} -> out=${o.length} |$o|")
         }
-    }
-
-    @Test
-    fun probeClip() {
-        val cases = listOf(
-            "123456", "١٢٣٤٥٦", "１２３４５６", " 123456 ", "12 34 56",
-            "4111111111111111", "4111 1111 1111 1111", "٤١١١١١١１١١１１１１１１",
-            "-----BEGIN RSA PRIVATE KEY-----", "12345678901234567890",
-            " ", "​", "\n\t ",
-        )
-        for (t in cases) println("P2_CLIP |$t| -> ${ClipClassifier.classify(t)}")
-        println("P2_LUHN arabic=" + ClipClassifier.luhnValid("١٢٣٤"))
-        println("P2_LUHN fullwidth=" + ClipClassifier.luhnValid("１２３４"))
-    }
-
-    @Test
-    fun probeSuggest() {
-        val lex = Lexicon.builtin()
-        val e = SuggestionEngine(lex)
-        val cases = listOf("teh", "hte", "i", "I", "café", "naïve", "ok👍", "don't", "'tis",
-            "a".repeat(60), "İstanbul", "STRASSE", "ß", "é", "  hello  ")
-        for (s in cases) {
-            val r = e.suggest(SuggestionRequest(s, null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE))
-            println("P2_SUG  |$s| ac=${r.autocorrect?.text} sugg=${r.suggestions.map { it.text }}")
-        }
-        for (k in FieldKind.entries) {
-            val r = e.suggest(SuggestionRequest("teh", "the", k, AutocorrectMode.AGGRESSIVE))
-            println("P2_FLD  $k ac=${r.autocorrect?.text} n=${r.suggestions.size}")
-        }
-    }
-
-    @Test
-    fun probeJoin2() {
-        val cases = listOf(
-            "hello" to "'s", "hello-" to "world", "\$" to "5", "hello" to "-",
-            "hello" to "\"", "…" to "a", "hello" to "…", "hello" to "’s",
-            "1" to "°", "(" to ")", "hello\n" to "world", "hello " to "world",
-        )
-        for ((p, t) in cases) println("P2_JOIN |$p|+|$t| -> |${CommitPlanner.joinForInsertion(p, t)}|")
-        for (p in listOf("café ", "café ", "你好 ", "مرحبا ", "👋 ", "_ ", "- "))
-            println("P2_DSP  |$p| -> ${CommitPlanner.doubleSpacePeriodApplies(p)}")
-    }
-
-    @Test
-    fun probeFieldKinds() {
-        for (k in FieldKind.entries) {
-            val r = c("hello world this is a test").let { it }
-            val res = cleaner.clean(CleanupRequest("hello world this is a test", "", k, CleanupOptions(), true))
-            println("P2_FK   $k -> |${res.text}|  (default=|${r.text}|)")
-        }
-        // precedingText variations
-        for (p in listOf("", "abc", "abc.", "abc. ", "abc\n", "abc\n  ", "abc?", "abc…", "abc!", "abc。"))
-            println("P2_PRE  |$p| -> |${cleaner.clean(CleanupRequest("hello there friend", p, FieldKind.TEXT, CleanupOptions(), true)).text}|")
-    }
-
-    @Test
-    fun probeWhitespace() {
-        val inputs = listOf(
-            "hello\tworld", "hello world", "hello   world", "\n\n\nhello",
-            "hello\n\n\n\nworld", "hello \n world", "hello", "hello world",
-        )
-        for (i in inputs) println("P2_WS   ${i.map { it.code }} -> |${c(i).text}| codes=${c(i).text.map { it.code }}")
+        for (i in listOf("hello 👋", "café", "\$75", "a‍b"))
+            println("P3_RAW  |$i| -> |${c(i, opts = CleanupOptions.RAW).text}|")
     }
 }
