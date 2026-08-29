@@ -54,8 +54,14 @@ later**, so:
    suggestion ranking.**~~ ✅ done. B and C were built concurrently in separate
    worktrees and are merged here. **Wave 1.5 is closed** — the only skip left in
    `:core` is VB-QA-05, which was never part of it.
-4. **Wave 0.5 — move the LLM refiner out of the keyboard process** (decided).
-   This is the next thing to build.
+4. ~~**Wave 0.5 — move the LLM refiner out of the keyboard process.**~~ ✅ done.
+   The refiner is in `:llm` behind `ILlmRefiner.aidl`; activities, the download
+   worker and WorkManager are in `:ui`. The hazard the plan called out — a
+   refiner that can now die on its own — is handled by treating every remote
+   failure as the fallback the callers already had, and by the existing
+   "replacement only when the user has not edited" check in `replaceUtterance`.
+   Nobody has run this on a device yet: the process boundary is the kind of
+   thing CI cannot tell you is right.
 5. Wave 0 items, then Wave 1. W1.2 (spoken-format intelligence) was gated on
    Package A landing, because both own `core/text/Tokens.kt`; that gate is now
    satisfied.
@@ -309,6 +315,18 @@ The boundary is not fully sealed, though: the payment-card rule in
 `ClipClassifier` still reads raw text, so a card number carrying a zero-width
 character reaches disk. It is unnumbered and recorded above under Package C's
 limitations, not as a new VB-QA id.
+
+## Where the models live now
+
+Model packs are no longer in `filesDir`. They are in the app's external media
+directory (`Android/media/<pkg>/models`), which most devices leave alone on
+uninstall — the packs are about a gigabyte and re-downloading them was the
+worst part of reinstalling. It is not a guarantee (Android calls that
+directory app-specific storage and some versions delete it), so nothing depends
+on it: if the directory is gone the packs simply download again. Internal
+storage is still the fallback where no volume is mounted, and packs installed
+by an older build are copied across once in the background
+(`ModelStore.migrateFromInternalStorage`, rules in `ModelRoots`).
 
 ## Hard constraints
 
