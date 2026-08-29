@@ -18,6 +18,9 @@ import com.vboard.core.text.CleanupRequest
 import com.vboard.core.text.CleanupResult
 import com.vboard.core.text.FieldKind
 import com.vboard.core.text.UtteranceCommand
+import com.vboard.app.llm.LlmRefinerClient
+import com.vboard.app.llm.RemoteRefiner
+import com.vboard.app.llm.refinerClientOrNull
 import com.vboard.app.settings.SettingsSnapshot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -769,7 +772,14 @@ object VoiceEngines {
     @Volatile var finalPass: FinalAsr? = null
         private set
 
-    @Volatile private var refiner: LlmRefiner? = null
+    /**
+     * The refiner is a *connection* now, not an engine: the model itself lives in
+     * the `:llm` process (V2_PLAN Wave 0.5), so what this object holds is a
+     * binder that costs nothing to keep and everything to forget at the wrong
+     * moment. Releasing it is what lets that process — and the half-gigabyte
+     * model in it — be reclaimed.
+     */
+    @Volatile private var refiner: LlmRefinerClient? = null
 
     private val idleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -829,10 +839,9 @@ object VoiceEngines {
     }
 
     @Synchronized
-    fun loadRefiner(context: Context, app: VBoardApp): LlmRefiner? {
+    fun loadRefiner(context: Context, app: VBoardApp): RemoteRefiner? {
         refiner?.let { return it }
-        val path = app.modelStore.refinerModelPath(app.packInstaller) ?: return null
-        return LlmRefiner(context.applicationContext, path).also { refiner = it }
+        return refinerClientOrNull(context, app)?.also { refiner = it }
     }
 
     @Synchronized
@@ -841,7 +850,7 @@ object VoiceEngines {
             Log.w(TAG, "refiner release refused: engines in use")
             return
         }
-        refiner?.let { runCatching { it.release() } }
+        refiner?.let { runCatching { it.disconnect() } }
         refiner = null
     }
 
@@ -853,7 +862,7 @@ object VoiceEngines {
         }
         runCatching { streaming?.release() }
         runCatching { finalPass?.release() }
-        runCatching { refiner?.release() }
+        runCatching { refiner?.disconnect() }
         streaming = null
         finalPass = null
         refiner = null
