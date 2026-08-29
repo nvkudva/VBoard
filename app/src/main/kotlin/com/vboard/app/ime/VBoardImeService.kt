@@ -4,7 +4,6 @@ import android.animation.ValueAnimator
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.util.Log
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -13,6 +12,8 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.Toast
+import com.vboard.app.R
 import com.vboard.app.VBoardApp
 import com.vboard.app.clipboard.ClipboardRepository
 import com.vboard.app.keyboard.ClipboardPanelView
@@ -65,6 +66,9 @@ class VBoardImeService : InputMethodService() {
 
     /** Closes the strip chip when its 60-second window runs out on its own. */
     private var chipExpiryJob: Job? = null
+
+    /** Highest "delete all clipboard history" timestamp already acted on. */
+    private var lastClipboardClearedAt = 0L
 
     private var theme: KeyboardTheme = KeyboardTheme.LIGHT
     private var profile: EditorProfile = EditorProfile.from(null)
@@ -119,6 +123,10 @@ class VBoardImeService : InputMethodService() {
         detachPanel(emojiPanel)
         emojiPanel?.listener = null
         emojiPanel = null
+        clipboardPanel?.dismissActionMenu()
+        detachPanel(clipboardPanel)
+        clipboardPanel?.listener = null
+        clipboardPanel = null
 
         theme = KeyboardTheme.forContext(this, settings.themeMode)
 
@@ -126,7 +134,10 @@ class VBoardImeService : InputMethodService() {
             listener = keyListener
         }
         strip = SuggestionStripView(this, theme).apply {
-            listener = SuggestionStripView.Listener { pickSuggestion(it) }
+            listener = object : SuggestionStripView.Listener {
+                override fun onSuggestionPicked(suggestion: Suggestion) = pickSuggestion(suggestion)
+                override fun onClipboardChipPicked() = pasteChip()
+            }
         }
         contentFrame = FrameLayout(this)
         contentFrame.addView(
@@ -149,6 +160,9 @@ class VBoardImeService : InputMethodService() {
             )
         }
         applyWindowInsetsPadding()
+        // Clipboard capture is bound to the input view's life, not the service's:
+        // an IME may only read the clipboard while it is the active one.
+        clipboard.onInputViewCreated()
         return root
     }
 
@@ -263,6 +277,10 @@ class VBoardImeService : InputMethodService() {
         keyboardView.enterIcon = profile.enterIcon
         keyboardView.micEnabled = profile.fieldKind.allowsVoice
         endVoiceSession(hideOnly = true, finalizePending = false)
+        clipboard.onInputViewShown(
+            fieldIsPassword = profile.fieldKind == FieldKind.PASSWORD,
+            noPersonalizedLearning = profile.noPersonalizedLearning,
+        )
         updateShiftForContext()
         refreshSuggestions()
     }
@@ -272,22 +290,40 @@ class VBoardImeService : InputMethodService() {
         // buffered audio is finalized rather than dropped on the floor.
         endVoiceSession(hideOnly = true, finalizePending = true)
         commitComposingAsIs()
+        clipboard.onInputViewHidden()
+        clipboard.flush()
+        clipboardPanel?.dismissActionMenu()
+        chipExpiryJob?.cancel()
         super.onFinishInputView(finishingInput)
     }
 
     private fun applySettings(s: SettingsSnapshot) {
+        // The clipboard exists before the views do, and its master switch must
+        // take effect (and delete the file) whether or not a keyboard is up.
+        clipboard.setHistoryEnabled(s.clipboardHistoryEnabled)
+        if (s.clipboardClearedAt > lastClipboardClearedAt) {
+            lastClipboardClearedAt = s.clipboardClearedAt
+            clipboard.deleteAll()
+        }
         if (!::keyboardView.isInitialized) return
         keyboardView.hapticsEnabled = s.hapticsEnabled
         keyboardView.keyPreviewEnabled = s.keyPreviewEnabled
+        // Live, with no keyboard restart: swap in the layout the setting asks for.
+        if (layer == KeyboardLayer.LETTERS) {
+            val wanted = KeyboardLayouts.forLayer(KeyboardLayer.LETTERS, s.numberRowEnabled)
+            if (keyboardView.layout !== wanted) keyboardView.layout = wanted
+        }
         val newTheme = KeyboardTheme.forContext(this, s.themeMode)
         if (newTheme != theme) {
             theme = newTheme
             keyboardView.applyTheme(theme)
             strip.applyTheme(theme)
             emojiPanel?.applyTheme(theme)
+            clipboardPanel?.applyTheme(theme)
             voiceBar?.applyTheme(theme)
             root.setBackgroundColor(theme.bgKeyboard)
         }
+        refreshClipboardChip()
     }
 
     // ------------------------------------------------------------- key events
@@ -304,6 +340,7 @@ class VBoardImeService : InputMethodService() {
                 KeyAction.ToSymbols2 -> setLayer(KeyboardLayer.SYMBOLS2)
                 KeyAction.ToLetters -> setLayer(KeyboardLayer.LETTERS)
                 KeyAction.ToEmoji -> setLayer(KeyboardLayer.EMOJI)
+                KeyAction.ToClipboard -> setLayer(KeyboardLayer.CLIPBOARD)
                 KeyAction.Shift -> Unit // handled inside the view
             }
         }
@@ -329,6 +366,7 @@ class VBoardImeService : InputMethodService() {
     private fun onText(raw: String, shifted: Boolean, fromLongPress: Boolean = false) {
         val ic = currentInputConnection ?: return
         lastAutocorrect = null
+        clipboard.dismissChip()
         val text = if (shifted && layer == KeyboardLayer.LETTERS && !fromLongPress) raw.uppercase() else raw
         val isWordChar = text.length == 1 && (text[0].isLetter() || text[0] == '\'') ||
             fromLongPress && text.all { it.isLetter() }
@@ -353,6 +391,7 @@ class VBoardImeService : InputMethodService() {
 
     private fun onSpace() {
         val ic = currentInputConnection ?: return
+        clipboard.dismissChip()
         if (composing.isNotEmpty()) {
             finishComposing(applyAutocorrect = true)
             ic.commitText(" ", 1)
@@ -373,6 +412,7 @@ class VBoardImeService : InputMethodService() {
 
     private fun onEnter() {
         val ic = currentInputConnection ?: return
+        clipboard.dismissChip()
         finishComposing(applyAutocorrect = false)
         val action = profile.imeActionId
         if (!profile.isMultiline && action != EditorInfo.IME_ACTION_NONE &&
@@ -388,6 +428,7 @@ class VBoardImeService : InputMethodService() {
 
     private fun onBackspace() {
         val ic = currentInputConnection ?: return
+        clipboard.dismissChip()
         lastAutocorrect?.let { (typed, corrected) ->
             // One backspace right after autocorrect reverts to the literal word.
             val expect = "$corrected "
@@ -428,6 +469,9 @@ class VBoardImeService : InputMethodService() {
         if (!suggestionsActive() || app.suggestionEngine == null) {
             strip.clearSuggestions()
             pendingAutocorrect = null
+            // The clipboard chip has its own setting and its own slot, so it
+            // survives word suggestions being off.
+            refreshClipboardChip()
             return
         }
         val engine = app.suggestionEngine ?: return
@@ -451,6 +495,66 @@ class VBoardImeService : InputMethodService() {
             pendingAutocorrect = result.autocorrect
             strip.setSuggestions(result.suggestions, result.autocorrect != null)
         }
+        refreshClipboardChip()
+    }
+
+    // ------------------------------------------------------------- clipboard
+
+    /**
+     * Puts the clipboard chip in the strip's left slot, or takes it away.
+     *
+     * The chip is only ever offered when nothing is composing. The strip's
+     * left slot is where the typed literal lives, and "the literal is always
+     * reachable" is a hard invariant of the suggestion engine — a chip that
+     * displaced it would quietly break the one guarantee autocorrect rests on.
+     */
+    private fun refreshClipboardChip() {
+        chipExpiryJob?.cancel()
+        if (!::strip.isInitialized) return
+        val entry = clipboardChipCandidate()
+        strip.setClipboardChip(entry?.text)
+        if (entry == null) return
+        // The window closes on its own even if the user touches nothing.
+        val remaining = CHIP_WINDOW_MS -
+            (System.currentTimeMillis() - entry.capturedAtMillis)
+        chipExpiryJob = serviceScope.launch {
+            delay(remaining.coerceAtLeast(0L))
+            if (::strip.isInitialized) strip.setClipboardChip(clipboardChipCandidate()?.text)
+        }
+    }
+
+    private fun clipboardChipCandidate(): ClipEntry? {
+        if (!settings.clipboardSuggestionsEnabled) return null
+        if (profile.fieldKind == FieldKind.PASSWORD) return null
+        if (composing.isNotEmpty()) return null
+        if (layer == KeyboardLayer.EMOJI || layer == KeyboardLayer.CLIPBOARD) return null
+        return clipboard.chip()
+    }
+
+    /** The strip chip was tapped: paste it, and stop offering it. */
+    private fun pasteChip() {
+        val entry = clipboardChipCandidate() ?: return
+        clipboard.dismissChip()
+        pasteClip(entry.text)
+    }
+
+    /**
+     * Commits clip text through the same spacing planner voice insertions use,
+     * so pasting "world" after "hello" yields "hello world" and pasting ".com"
+     * after "github" yields "github.com" rather than "github .com".
+     */
+    private fun pasteClip(text: String) {
+        val ic = currentInputConnection ?: return
+        commitComposingAsIs()
+        val joined = CommitPlanner.joinForInsertion(precedingText(4), text)
+        ic.commitText(joined, 1)
+        updateShiftForContext()
+        refreshSuggestions()
+    }
+
+    private fun onClipsChanged() {
+        refreshClipboardChip()
+        clipboardPanel?.setClips(clipboard.pinnedClips(), clipboard.recentClips())
     }
 
     private fun pickSuggestion(suggestion: Suggestion) {
@@ -529,15 +633,24 @@ class VBoardImeService : InputMethodService() {
     // ------------------------------------------------------------------ layers
 
     private fun setLayer(newLayer: KeyboardLayer) {
+        if (newLayer == KeyboardLayer.CLIPBOARD) {
+            // A clipboard panel over a password field would be an invitation to
+            // paste a credential into a field the keyboard cannot see: refuse.
+            if (profile.fieldKind == FieldKind.PASSWORD) return
+            layer = newLayer
+            showClipboardPanel()
+            return
+        }
         layer = newLayer
         if (newLayer == KeyboardLayer.EMOJI) {
             showEmojiPanel()
             return
         }
-        hideEmojiPanel()
-        keyboardView.layout = KeyboardLayouts.forLayer(newLayer)
+        hidePanels()
+        keyboardView.layout = KeyboardLayouts.forLayer(newLayer, settings.numberRowEnabled)
         keyboardView.shiftState = KeyboardView.ShiftState.OFF
         if (newLayer == KeyboardLayer.LETTERS) updateShiftForContext()
+        refreshClipboardChip()
     }
 
     private fun showEmojiPanel() {
@@ -555,17 +668,70 @@ class VBoardImeService : InputMethodService() {
             emojiPanel = p
         }
         if (panel.parent == null) contentFrame.addView(panel)
+        clipboardPanel?.visibility = View.GONE
         keyboardView.visibility = View.GONE
         panel.visibility = View.VISIBLE
         strip.clearSuggestions()
+        refreshClipboardChip()
+    }
+
+    /**
+     * Same swap-into-the-content-frame pattern as the emoji panel: the panel is
+     * built once, kept as a field, and shown or hidden rather than re-inflated.
+     */
+    private fun showClipboardPanel() {
+        val panel = clipboardPanel ?: ClipboardPanelView(
+            this,
+            theme,
+            keyboardView.height.takeIf { it > 0 } ?: dp(298),
+        ).also { p ->
+            p.listener = object : ClipboardPanelView.Listener {
+                override fun onClipPicked(entry: ClipEntry) {
+                    setLayer(KeyboardLayer.LETTERS)
+                    pasteClip(entry.text)
+                }
+
+                override fun onPinToggled(entry: ClipEntry) {
+                    if (entry.pinned) {
+                        clipboard.unpin(entry.text)
+                    } else if (clipboard.pin(entry.text) == PinResult.LIMIT_REACHED) {
+                        Toast.makeText(
+                            this@VBoardImeService,
+                            R.string.clipboard_pin_limit,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+
+                override fun onClipDeleted(entry: ClipEntry) = clipboard.delete(entry.text)
+
+                override fun onDeleteAllRequested() = clipboard.deleteAll()
+
+                override fun onBackToLetters() = setLayer(KeyboardLayer.LETTERS)
+
+                override fun onBackspace() = onBackspaceFromPanel()
+            }
+            clipboardPanel = p
+        }
+        if (panel.parent == null) contentFrame.addView(panel)
+        panel.setClips(clipboard.pinnedClips(), clipboard.recentClips())
+        emojiPanel?.visibility = View.GONE
+        keyboardView.visibility = View.GONE
+        panel.visibility = View.VISIBLE
+        strip.clearSuggestions()
+        strip.setClipboardChip(null)
+        chipExpiryJob?.cancel()
     }
 
     private fun onBackspaceFromPanel() {
         onBackspace()
     }
 
-    private fun hideEmojiPanel() {
+    /** Returns the content frame to the keyboard from whichever panel is up. */
+    private fun hidePanels() {
         emojiPanel?.visibility = View.GONE
+        clipboardPanel?.dismissActionMenu()
+        clipboardPanel?.visibility = View.GONE
         keyboardView.visibility = View.VISIBLE
     }
 
@@ -693,6 +859,8 @@ class VBoardImeService : InputMethodService() {
         val to = dp(KeyboardMetrics.VOICE_BAR_HEIGHT_DP.toInt())
         keyboardView.visibility = View.GONE
         emojiPanel?.visibility = View.GONE
+        clipboardPanel?.dismissActionMenu()
+        clipboardPanel?.visibility = View.GONE
         bar.visibility = View.VISIBLE
         bar.alpha = 0f
         val lp = bar.layoutParams
@@ -741,6 +909,9 @@ class VBoardImeService : InputMethodService() {
 
     companion object {
         private const val TAG = "VBoardIme"
+
+        /** Must match ClipLimits.chipWindowMillis; the chip closes on its own. */
+        private const val CHIP_WINDOW_MS = 60_000L
         private val SENTENCE_ENDER_CHARS = setOf('.', '!', '?')
         private val ATTACHING_PUNCT = setOf('.', ',', '!', '?', ';', ':', ')', ']', '}')
     }

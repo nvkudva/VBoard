@@ -13,7 +13,9 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
+import android.widget.TextView
 import com.vboard.app.R
 import com.vboard.core.clipboard.ClipEntry
 
@@ -36,7 +38,11 @@ class ClipboardPanelView(
 
     interface Listener {
         fun onClipPicked(entry: ClipEntry)
-        fun onClipHeld(entry: ClipEntry)
+
+        /** Pin an unpinned clip, or unpin a pinned one. */
+        fun onPinToggled(entry: ClipEntry)
+        fun onClipDeleted(entry: ClipEntry)
+        fun onDeleteAllRequested()
         fun onBackToLetters()
         fun onBackspace()
     }
@@ -58,11 +64,80 @@ class ClipboardPanelView(
     /** Flattened render list: section headers interleaved with card rows. */
     private var cells: List<Cell> = emptyList()
 
+    private var actionMenu: PopupWindow? = null
+
     init {
         orientation = VERTICAL
         setBackgroundColor(theme.bgKeyboard)
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
         addView(bottomBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(46f).toInt()))
+    }
+
+    /** Closes the long-press action menu, if one is open. */
+    fun dismissActionMenu() {
+        actionMenu?.dismiss()
+        actionMenu = null
+    }
+
+    override fun onDetachedFromWindow() {
+        dismissActionMenu()
+        super.onDetachedFromWindow()
+    }
+
+    /**
+     * Pin / Unpin, Delete, Delete all for one card. A PopupWindow rather than a
+     * dialog: an IME has no activity to host one.
+     */
+    private fun showActionMenu(entry: ClipEntry, anchorY: Float) {
+        dismissActionMenu()
+        val container = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setBackgroundColor(theme.popupSurface)
+            val pad = dp(6f).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val actions = listOf<Pair<String, () -> Unit>>(
+            resources.getString(
+                if (entry.pinned) R.string.clipboard_unpin else R.string.clipboard_pin,
+            ) to { listener?.onPinToggled(entry) },
+            resources.getString(R.string.clipboard_delete) to { listener?.onClipDeleted(entry) },
+            resources.getString(R.string.clipboard_delete_all) to { listener?.onDeleteAllRequested() },
+        )
+        for ((label, action) in actions) {
+            container.addView(
+                TextView(context).apply {
+                    text = label
+                    setTextColor(theme.keyText)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, MENU_SP)
+                    val padH = dp(20f).toInt()
+                    val padV = dp(12f).toInt()
+                    setPadding(padH, padV, padH, padV)
+                    setOnClickListener {
+                        dismissActionMenu()
+                        action()
+                    }
+                },
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+            )
+        }
+        val window = PopupWindow(
+            container,
+            LayoutParams.WRAP_CONTENT,
+            LayoutParams.WRAP_CONTENT,
+            // Not focusable: a focusable popup inside the IME window takes input
+            // focus off the editor, which is what KeyPopup avoids too. Touches
+            // still reach the rows, and a tap outside dismisses.
+            /* focusable = */ false,
+        ).apply {
+            elevation = dp(8f)
+            isOutsideTouchable = true
+            isTouchable = true
+        }
+        actionMenu = window
+        // Anchored to the panel and nudged towards the held card's row. Clamped
+        // so a card near the top of a scrolled grid cannot push it off-screen.
+        val localY = anchorY.toInt().coerceIn(0, height)
+        window.showAsDropDown(this, dp(24f).toInt(), -(height - localY).coerceAtMost(height - dp(48f).toInt()))
     }
 
     fun applyTheme(newTheme: KeyboardTheme) {
@@ -125,7 +200,7 @@ class ClipboardPanelView(
             val entry = pressed ?: return@Runnable
             longPressFired = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            listener?.onClipHeld(entry)
+            showActionMenu(entry, downY)
         }
 
         private val cardHeight get() = dp(CARD_HEIGHT_DP)
@@ -363,6 +438,7 @@ class ClipboardPanelView(
         /** Far more than three lines can hold; the rest is never measured. */
         const val CARD_PREVIEW_CHARS = 240
         const val LONG_PRESS_MS = 400L
+        const val MENU_SP = 15f
 
         /** U+1F4CC PUSHPIN. */
         const val PIN_GLYPH = "📌"
