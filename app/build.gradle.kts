@@ -1,3 +1,13 @@
+// Release signing and versioning are driven by the environment so that a tag
+// build in CI produces an installable artifact while an ordinary local build
+// needs no keystore. See .github/workflows/release.yml.
+//
+// VBOARD_VERSION_NAME / VBOARD_VERSION_CODE come from the tag; the keystore
+// variables are GitHub secrets decoded onto the runner. When the keystore is
+// absent the release build is simply unsigned, which is what CI's non-tag
+// release job wants — it is verifying that R8 succeeds, not shipping.
+val keystorePath: String? = System.getenv("VBOARD_KEYSTORE_PATH")
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -12,8 +22,10 @@ android {
         applicationId = "com.vboard.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // Every published build needs a distinct, increasing versionCode or
+        // Android refuses the upgrade over an existing install.
+        versionCode = (System.getenv("VBOARD_VERSION_CODE") ?: "1").toInt()
+        versionName = System.getenv("VBOARD_VERSION_NAME") ?: "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -28,8 +40,22 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("VBOARD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("VBOARD_KEY_ALIAS")
+                keyPassword = System.getenv("VBOARD_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // Null when no keystore is configured, which leaves the APK unsigned
+            // rather than failing the build.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
