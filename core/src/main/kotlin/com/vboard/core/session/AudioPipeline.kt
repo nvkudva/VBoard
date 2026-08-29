@@ -111,8 +111,12 @@ class AudioPipeline(
         if (closed) return OfferResult(false, 0, evicted)
 
         // Admission control. Single producer, so a plain read-modify-write of
-        // `queued` is safe here; the consumer only ever decrements it.
-        if (queued.get() + samples.size > queueCapacitySamples) {
+        // `queued` is safe here; the consumer only ever decrements it. An empty
+        // queue always admits, whatever the chunk size: a device that hands back
+        // a chunk bigger than the capacity must not livelock into dropping 100%
+        // of the audio.
+        val queuedNow = queued.get()
+        if (queuedNow > 0 && queuedNow + samples.size > queueCapacitySamples) {
             droppedTotal.addAndGet(samples.size.toLong())
             droppedPending.addAndGet(samples.size)
             droppedChunks.incrementAndGet()

@@ -20,6 +20,7 @@
     <string name="setup_finish">Finish setup</string>
     <string name="setup_skip_downloads">Skip for now — I\'ll just type</string>
     <string name="setup_skip_note">You can add voice typing any time from VBoard settings, or by tapping the mic key.</string>
+    <string name="setup_add_voice">Add voice typing · %1$s</string>
 
     <!-- Pack rows -->
     <string name="setup_pack_download_sized">Download · %1$s</string>

@@ -39,7 +39,11 @@
     <string name="toolbar_ai_fix">Fix</string>
     <string name="toolbar_ai_fix_working">Fixing…</string>
     <string name="toolbar_ai_fix_undo">Undo</string>
-    <string name="ai_fix_done">Fixed — tap Undo to put it back</string>
+    <string name="ai_fix_done_mechanical">Fixed spelling and spacing — tap Undo to put it back</string>
+    <plurals name="ai_fix_done_editorial">
+        <item quantity="one">Fixed, including 1 wording change — tap Undo</item>
+        <item quantity="other">Fixed, including %d wording changes — tap Undo</item>
+    </plurals>
     <string name="ai_fix_rules_only_missing">Fixed spelling and spacing — smart cleanup isn\'t downloaded</string>
     <string name="ai_fix_rules_only_failed">Fixed spelling and spacing — smart cleanup couldn\'t run</string>
     <string name="ai_fix_rules_only_slow">Fixed spelling and spacing — smart cleanup took too long</string>

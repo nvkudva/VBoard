@@ -78,7 +78,7 @@ class ModelDownloadWorker(
 
         val pump = launch {
             while (isActive) {
-                delay(PUBLISH_INTERVAL_MS)
+                delay(NOTIFICATION_INTERVAL_MS)
                 val state = latest as? PackState.Downloading ?: continue
                 runCatching {
                     setProgress(
@@ -238,7 +238,11 @@ class ModelDownloadWorker(
 
         /** WorkManager's own backoff already spaces these out; four is plenty. */
         private const val MAX_ATTEMPTS = 4
+        /** How often the in-app progress flow is refreshed. */
         private const val PUBLISH_INTERVAL_MS = 400L
+
+        /** How often the notification and the persisted WorkInfo progress are rewritten. */
+        private const val NOTIFICATION_INTERVAL_MS = 1_000L
 
         internal const val KEY_PACK_ID = "pack_id"
         internal const val KEY_BYTES_DONE = "bytes_done"

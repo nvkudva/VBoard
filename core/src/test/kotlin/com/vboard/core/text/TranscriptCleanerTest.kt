@@ -28,6 +28,35 @@ class TranscriptCleanerTest {
     )
 
     @Nested
+    inner class SentenceStartAfterNewline {
+        @Test
+        fun `capitalizes the utterance after a spoken new line`() {
+            // A plain trimEnd() also strips the newline, so this branch was unreachable
+            // and the sentence after "new line" stayed lowercase.
+            assertEquals(
+                "Tuesday works for me.",
+                clean("tuesday works for me", preceding = "See you then.\n", terminal = true).text,
+            )
+        }
+
+        @Test
+        fun `still capitalizes when the newline has trailing spaces`() {
+            assertEquals(
+                "Tuesday works for me.",
+                clean("tuesday works for me", preceding = "See you then.\n  ", terminal = true).text,
+            )
+        }
+
+        @Test
+        fun `does not capitalize mid-sentence`() {
+            assertEquals(
+                "tuesday works for me.",
+                clean("tuesday works for me", preceding = "I think ", terminal = true).text,
+            )
+        }
+    }
+
+    @Nested
     inner class Fillers {
         @Test
         fun `removes hesitation fillers`() {

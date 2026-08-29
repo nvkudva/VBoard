@@ -56,7 +56,8 @@ class ModelStore(context: Context) {
     fun accuracyModelReady(installer: PackInstaller): Boolean = parakeetPaths(installer) != null
 
     /**
-     * True when every pack in the catalog is installed and extracted.
+     * True when both speech packs are installed and extracted, i.e. the two-pass pipeline is
+     * fully available.
      *
      * Note the changed meaning: this used to be the app's definition of "ready to dictate",
      * which is now [dictationReady]. Use that for anything that gates the mic.

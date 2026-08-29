@@ -4,11 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeProvider
+import com.vboard.app.R
 import com.vboard.core.suggest.Suggestion
 
 /**
@@ -54,6 +57,10 @@ class SuggestionStripView(
     private val dividerPaint = Paint().apply { strokeWidth = dp(1f) }
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    init {
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
+
     fun applyTheme(newTheme: KeyboardTheme) {
         theme = newTheme
         invalidate()
@@ -62,12 +69,16 @@ class SuggestionStripView(
     fun setSuggestions(ranked: List<Suggestion>, autocorrect: Boolean) {
         slots = listOf(ranked.getOrNull(1), ranked.getOrNull(0), ranked.getOrNull(2))
         autocorrectInCenter = autocorrect && ranked.isNotEmpty()
+        a11y.reset()
+        a11y.notifyContentChanged()
         invalidate()
     }
 
     fun clearSuggestions() {
         slots = listOf(null, null, null)
         autocorrectInCenter = false
+        a11y.reset()
+        a11y.notifyContentChanged()
         invalidate()
     }
 
@@ -79,6 +90,8 @@ class SuggestionStripView(
     fun setClipboardChip(preview: String?) {
         if (clipboardChip == preview) return
         clipboardChip = preview
+        a11y.reset()
+        a11y.notifyContentChanged()
         invalidate()
     }
 
@@ -188,7 +201,71 @@ class SuggestionStripView(
         return super.onTouchEvent(event)
     }
 
+    // ------------------------------------------------------------ accessibility
+
+    /**
+     * One node per occupied slot. Empty slots are not exposed: a screen reader
+     * sweeping the strip should find two suggestions when there are two, not
+     * three cells one of which is silent.
+     */
+    private val a11y = object : VirtualCells(this) {
+
+        override fun count(): Int = SLOTS
+
+        override fun boundsOf(id: Int): RectF? {
+            if (id !in 0 until SLOTS || width == 0) return null
+            if (id == 0 && clipboardChip != null) return slotBounds(0)
+            if (slots.getOrNull(id) == null) return null
+            return slotBounds(id)
+        }
+
+        override fun descriptionOf(id: Int): CharSequence? {
+            if (id == 0) {
+                clipboardChip?.let { return context.getString(R.string.a11y_clipboard_chip, it) }
+            }
+            val suggestion = slots.getOrNull(id) ?: return null
+            val autocorrect = id == 1 && autocorrectInCenter
+            return context.getString(
+                if (autocorrect) R.string.a11y_suggestion_autocorrect else R.string.a11y_suggestion,
+                suggestion.text,
+            )
+        }
+
+        override fun clickLabelOf(id: Int): CharSequence? =
+            if (id == 0 && clipboardChip != null) {
+                context.getString(R.string.a11y_action_paste)
+            } else {
+                null
+            }
+
+        override fun click(id: Int): Boolean {
+            if (id == 0 && clipboardChip != null) {
+                listener?.onClipboardChipPicked()
+                return true
+            }
+            val suggestion = slots.getOrNull(id) ?: return false
+            listener?.onSuggestionPicked(suggestion)
+            return true
+        }
+    }
+
+    private fun slotBounds(slot: Int): RectF {
+        val slotW = width / SLOTS.toFloat()
+        return RectF(slot * slotW, 0f, (slot + 1) * slotW, height.toFloat())
+    }
+
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+    override fun onHoverEvent(event: MotionEvent): Boolean =
+        if (a11y.onHover(event)) true else super.onHoverEvent(event)
+
+    /** Test seam: the accessibility node provider. */
+    internal fun a11yProviderForTest(): AccessibilityNodeProvider = a11y.provider
+
     private companion object {
+        /** Left / centre / right. */
+        const val SLOTS = 3
+
         /** U+1F4CE PAPERCLIP. Rendered by the system emoji font. */
         const val CLIP_GLYPH = "\uD83D\uDCCE"
 

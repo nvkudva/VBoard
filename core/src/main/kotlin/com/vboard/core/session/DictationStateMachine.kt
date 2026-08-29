@@ -16,6 +16,9 @@ package com.vboard.core.session
  * moment of the tap is what used to throw away the user's last sentence.
  * LLM refinement is deliberately NOT a state: it runs post-commit in parallel
  * (see CommitUtterance.refine) so it never blocks the next utterance.
+ * Losing the microphone to a call or another app (Event.AudioFocusLost) takes
+ * the same deferral route as a stop: the buffered utterance is transcribed and
+ * committed first, and only then does the session end in an error (VB-123).
  */
 class DictationStateMachine(private val config: Config = Config()) {
 
@@ -251,12 +254,27 @@ class DictationStateMachine(private val config: Config = Config()) {
                 // the tap almost always lands after the 0.8s endpoint has already
                 // moved us here. Tearing down now would drop the commit on the
                 // floor; instead cut the mic and end the session once it lands.
-                State.Finalizing(state.partial, state.utteranceIndex, stopAfterCommit = true) to
+                state.copy(stopAfterCommit = true) to
                     buildList { if (!state.stopAfterCommit) add(Effect.StopAudio) }
             Event.SilenceTimeout -> state to emptyList()
-            Event.AudioError -> errorState(ErrorKind.AUDIO_UNAVAILABLE, stopAudio = true)
-            Event.ModelsMissing -> errorState(ErrorKind.MODEL_MISSING, stopAudio = true)
-            Event.ModelsUnusable -> errorState(ErrorKind.MODEL_CORRUPT, stopAudio = true)
+            // The final pass for this utterance is already running over audio
+            // that was captured before the interruption, so let it land — but
+            // remember to end in the error rather than back in Listening.
+            Event.AudioFocusLost ->
+                state.copy(
+                    stopAfterCommit = true,
+                    endWithError = state.endWithError ?: ErrorKind.AUDIO_UNAVAILABLE,
+                ) to buildList { if (!state.stopAfterCommit) add(Effect.StopAudio) }
+            is Event.AudioOverrun -> state to noteOverrun(event.droppedSamples)
+            // stopAudio only when the mic has not already been cut: a second
+            // StopAudio for one session is a teardown of a record that is
+            // already gone.
+            Event.AudioError ->
+                errorState(ErrorKind.AUDIO_UNAVAILABLE, stopAudio = !state.stopAfterCommit)
+            Event.ModelsMissing ->
+                errorState(ErrorKind.MODEL_MISSING, stopAudio = !state.stopAfterCommit)
+            Event.ModelsUnusable ->
+                errorState(ErrorKind.MODEL_CORRUPT, stopAudio = !state.stopAfterCommit)
             else -> state to emptyList()
         }
 
@@ -275,7 +293,12 @@ class DictationStateMachine(private val config: Config = Config()) {
      * that is the deferred stop a tap during Finalizing asked for, and the commit
      * is emitted *before* the teardown so the words reach the field.
      */
-    private fun commitThen(text: String, index: Int, stop: Boolean): Pair<State, List<Effect>> {
+    private fun commitThen(
+        text: String,
+        index: Int,
+        stop: Boolean,
+        endWithError: ErrorKind? = null,
+    ): Pair<State, List<Effect>> {
         val effects = mutableListOf<Effect>()
         if (text.isNotBlank()) {
             effects.add(Effect.CommitUtterance(text, index, refine = config.refineEnabled))
@@ -283,11 +306,25 @@ class DictationStateMachine(private val config: Config = Config()) {
         } else {
             effects.add(Effect.UpdatePartial(""))
         }
+        if (endWithError != null) {
+            // The commit is emitted first, then the explanation: the user's
+            // words reach the field and the bar then says why the mic stopped.
+            // StopAudio already went out when the interruption was reported.
+            effects.add(Effect.SignalError(endWithError))
+            effects.add(Effect.Haptic(HapticKind.ERROR))
+            return State.Error(endWithError) to effects
+        }
         if (!stop) return State.Listening("", index + 1) to effects
         // StopAudio already went out when the stop was requested.
         effects.add(Effect.HideVoiceBar)
         effects.add(Effect.Haptic(HapticKind.SESSION_END))
         return State.Idle to effects
+    }
+
+    private fun noteOverrun(droppedSamples: Int): List<Effect> {
+        if (droppedSamples <= 0) return emptyList()
+        droppedSamplesThisSession += droppedSamples
+        return listOf(Effect.NoteAudioOverrun(droppedSamples, droppedSamplesThisSession))
     }
 
     private fun stopEffects(started: Boolean): Pair<State, List<Effect>> =

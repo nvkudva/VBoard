@@ -444,7 +444,10 @@ class TranscriptCleaner {
 
     private fun sentenceStartsAt(precedingText: String, fieldKind: FieldKind): Boolean {
         if (!fieldKind.allowsAutoCapitalize) return false
-        val trimmed = precedingText.trimEnd()
+        // Trim only horizontal space: a plain trimEnd() also strips the newline this
+        // function is looking for, which made the '\n' branch below unreachable and left
+        // the sentence after a spoken "new line" uncapitalized.
+        val trimmed = precedingText.trimEnd(' ', '\t')
         if (trimmed.isEmpty()) return true
         val last = trimmed.last()
         return last == '.' || last == '!' || last == '?' || last == '\n'

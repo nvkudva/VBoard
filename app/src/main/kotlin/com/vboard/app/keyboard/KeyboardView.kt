@@ -12,7 +12,6 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeProvider
 import android.view.inputmethod.InputMethodManager
 import com.vboard.app.R
@@ -137,6 +136,12 @@ class KeyboardView(
     private var spaceDragOriginX = 0f
     private var spaceDragSteps = 0
     private var spaceDragging = false
+
+    init {
+        // A canvas with no children and no text looks unimportant to the
+        // framework; without this the node provider is never asked for anything.
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+    }
 
     fun applyTheme(newTheme: KeyboardTheme) {
         theme = newTheme
@@ -384,7 +389,14 @@ class KeyboardView(
                 if (hapticsEnabled) {
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 }
-                if (kb.key.action is KeyAction.Text && keyPreviewEnabled && !kb.key.isFunction) {
+                // DESIGN_SPEC §10: the preview bubble sits exactly where a
+                // TalkBack user's finger is exploring, so it is suppressed while
+                // touch exploration is on. The haptic below is not.
+                if (kb.key.action is KeyAction.Text &&
+                    keyPreviewEnabled &&
+                    !kb.key.isFunction &&
+                    !a11y.touchExplorationEnabled()
+                ) {
                     showPreview(kb)
                 }
                 when {
@@ -463,22 +475,28 @@ class KeyboardView(
         return super.onTouchEvent(event)
     }
 
-    /** Nearest-key hit test: touches in gaps are assigned to the closest key. */
-    private fun keyAt(x: Float, y: Float): KeyBound? {
-        var best: KeyBound? = null
+    private fun keyAt(x: Float, y: Float): KeyBound? = keyBounds.getOrNull(keyIndexAt(x, y))
+
+    /**
+     * Nearest-key hit test: touches in gaps are assigned to the closest key.
+     * Returns the index into [keyBounds], which doubles as the accessibility
+     * virtual view id, or [NO_CELL].
+     */
+    private fun keyIndexAt(x: Float, y: Float): Int {
+        var best = NO_CELL
         var bestDist = Float.MAX_VALUE
-        for (kb in keyBounds) {
-            if (kb.bounds.contains(x, y)) return kb
+        for ((index, kb) in keyBounds.withIndex()) {
+            if (kb.bounds.contains(x, y)) return index
             val dx = maxOf(kb.bounds.left - x, 0f, x - kb.bounds.right)
             val dy = maxOf(kb.bounds.top - y, 0f, y - kb.bounds.bottom)
             val dist = dx * dx + dy * dy
             if (dist < bestDist) {
                 bestDist = dist
-                best = kb
+                best = index
             }
         }
         // Only accept gap touches reasonably close to a key (within one gap).
-        return if (bestDist <= dp(12f) * dp(12f)) best else null
+        return if (bestDist <= dp(12f) * dp(12f)) best else NO_CELL
     }
 
     private fun handleTap(key: Key) {
@@ -511,11 +529,25 @@ class KeyboardView(
     private fun onLongPress() {
         val kb = pressedKey ?: return
         longPressFired = true
+        fireLongPress(kb)
+    }
+
+    /**
+     * The long-press behaviour for one key, reachable from the touch timer and
+     * from the accessibility `ACTION_LONG_CLICK` on the key's virtual node.
+     */
+    private fun fireLongPress(kb: KeyBound) {
         val heldAction = kb.key.longPressAction
         when {
             kb.key.action == KeyAction.Mic -> listener?.onKeyAction(KeyAction.Mic, false)
             kb.key.action == KeyAction.Space -> {
-                // Long-press space: no-op for v1 (reserved for IME switcher).
+                // The only way out of this keyboard today: there is no globe key
+                // (see Keys.kt), and a screen-reader user who cannot get back to
+                // their previous IME is trapped in it. Holding space opens the
+                // system input-method picker; the space key's virtual node
+                // advertises the same thing as a long-click action.
+                if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                showInputMethodPicker()
             }
             // A held key with its own action (?123 -> clipboard) fires it instead
             // of opening a candidate popup.
@@ -532,11 +564,29 @@ class KeyboardView(
                     kb.key.longPress
                 }
                 popup = KeyPopup(this, theme).also {
+                    // Selecting a candidate by slide-and-lift is handled on the
+                    // keyboard's own ACTION_UP; this is the path for a screen
+                    // reader activating one of the popup's virtual nodes, which
+                    // never sees that gesture.
+                    it.onCandidateChosen = { chosen ->
+                        dismissPopup()
+                        listener?.onKeyLongPressText(chosen)
+                    }
                     it.showSelector(kb.bounds, candidates)
                 }
                 if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
         }
+    }
+
+    /**
+     * Opens the system input-method picker. Uses the picker rather than
+     * `switchToNextInputMethod`, which needs the IME token this view has no
+     * access to.
+     */
+    private fun showInputMethodPicker() {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showInputMethodPicker()
     }
 
     private fun showPreview(kb: KeyBound) {
@@ -576,6 +626,148 @@ class KeyboardView(
         dismissPopup()
         super.onDetachedFromWindow()
     }
+
+    // ------------------------------------------------------------ accessibility
+
+    /**
+     * One virtual node per key, over the bounds [computeKeyBounds] already
+     * produces. See [VirtualCells]; DESIGN_SPEC §10.
+     */
+    private val a11y = object : VirtualCells(this) {
+
+        override fun count(): Int {
+            ensureKeyBounds()
+            return keyBounds.size
+        }
+
+        override fun boundsOf(id: Int): RectF? {
+            ensureKeyBounds()
+            return keyBounds.getOrNull(id)?.bounds
+        }
+
+        override fun descriptionOf(id: Int): CharSequence? =
+            keyBounds.getOrNull(id)?.let { keyDescription(it.key) }
+
+        override fun isEnabled(id: Int): Boolean {
+            val key = keyBounds.getOrNull(id)?.key ?: return false
+            return key.action != KeyAction.Mic || micEnabled
+        }
+
+        override fun clickLabelOf(id: Int): CharSequence? =
+            keyBounds.getOrNull(id)?.let { clickLabelFor(it.key) }
+
+        override fun longClickLabelOf(id: Int): CharSequence? =
+            keyBounds.getOrNull(id)?.let { longClickLabelFor(it.key) }
+
+        override fun click(id: Int): Boolean {
+            val kb = keyBounds.getOrNull(id) ?: return false
+            handleTap(kb.key)
+            return true
+        }
+
+        override fun longClick(id: Int): Boolean {
+            val kb = keyBounds.getOrNull(id) ?: return false
+            if (longClickLabelFor(kb.key) == null) return false
+            fireLongPress(kb)
+            return true
+        }
+
+        override fun idAt(x: Float, y: Float): Int {
+            ensureKeyBounds()
+            return keyIndexAt(x, y)
+        }
+
+        override fun onHoverChanged(id: Int) {
+            // The pressed fill follows the exploring finger: the same feedback a
+            // sighted low-vision user gets from a normal press.
+            pressedKey = keyBounds.getOrNull(id)
+            invalidate()
+            if (id != NO_CELL && hapticsEnabled) {
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+        }
+
+        override fun onHoverLift(id: Int) {
+            // Lift-to-type. A selector popup owns the lift instead — its own
+            // nodes are what the user is choosing between.
+            if (popup?.isSelector == true) return
+            keyBounds.getOrNull(id)?.let { handleTap(it.key) }
+        }
+    }
+
+    override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+    override fun onHoverEvent(event: MotionEvent): Boolean =
+        if (a11y.onHover(event)) true else super.onHoverEvent(event)
+
+    private fun ensureKeyBounds() {
+        if (keyBounds.isEmpty()) computeKeyBounds()
+    }
+
+    /** DESIGN_SPEC §10: letters announce the character, function keys the action. */
+    private fun keyDescription(key: Key): CharSequence = when {
+        // Bound to nothing today — see the report on the missing globe key — but
+        // the icon exists, so the description is ready for it.
+        key.icon == KeyIcon.GLOBE -> context.getString(R.string.a11y_switch_keyboard)
+        else -> when (val action = key.action) {
+            KeyAction.Mic -> context.getString(R.string.a11y_mic_key)
+            KeyAction.Backspace -> context.getString(R.string.a11y_backspace)
+            KeyAction.Enter -> when (enterIcon) {
+                KeyIcon.SEARCH -> context.getString(R.string.a11y_enter_search)
+                KeyIcon.SEND -> context.getString(R.string.a11y_enter_send)
+                else -> context.getString(R.string.a11y_enter)
+            }
+            KeyAction.Space -> context.getString(R.string.a11y_space)
+            KeyAction.Shift -> when (shiftState) {
+                ShiftState.OFF -> context.getString(R.string.a11y_shift)
+                ShiftState.SHIFT -> context.getString(R.string.a11y_shift_on)
+                ShiftState.CAPS_LOCK -> context.getString(R.string.a11y_caps_lock_on)
+            }
+            KeyAction.ToSymbols -> context.getString(R.string.a11y_symbols)
+            KeyAction.ToSymbols2 -> context.getString(R.string.a11y_symbols_more)
+            KeyAction.ToLetters -> context.getString(R.string.a11y_letters)
+            KeyAction.ToEmoji -> context.getString(R.string.a11y_emoji)
+            KeyAction.ToClipboard -> context.getString(R.string.a11y_clipboard)
+            is KeyAction.Text -> displayLabel(key).ifEmpty { action.text }
+        }
+    }
+
+    /**
+     * The verb TalkBack reads after "double-tap to". Null everywhere the default
+     * ("activate") is right; the mic is the one key whose result is worth naming.
+     */
+    private fun clickLabelFor(key: Key): CharSequence? =
+        if (key.action == KeyAction.Mic) context.getString(R.string.a11y_action_speak) else null
+
+    private fun longClickLabelFor(key: Key): CharSequence? = when {
+        key.action == KeyAction.Space -> context.getString(R.string.a11y_action_switch_keyboard)
+        key.longPressAction == KeyAction.ToClipboard ->
+            context.getString(R.string.a11y_action_open_clipboard)
+        key.longPressAction != null -> null
+        key.longPress.isNotEmpty() -> context.getString(R.string.a11y_action_alternates)
+        else -> null
+    }
+
+    /** Test seam: the popup currently on screen, if any. */
+    internal fun activePopupForTest(): KeyPopup? = popup
+
+    /** Test seam: the accessibility node provider, without the View override. */
+    internal fun a11yProviderForTest(): AccessibilityNodeProvider = a11y.provider
+
+    /** Test seam: the virtual view id of the first key whose label matches. */
+    internal fun keyIndexOfLabelForTest(label: String): Int {
+        ensureKeyBounds()
+        return keyBounds.indexOfFirst { it.key.label == label }
+    }
+
+    /** Test seam: the virtual view id of the first key with this action. */
+    internal fun keyIndexOfActionForTest(action: KeyAction): Int {
+        ensureKeyBounds()
+        return keyBounds.indexOfFirst { it.key.action == action }
+    }
+
+    /** Test seam: a key preview bubble (not a selector) is on screen. */
+    internal fun previewShowingForTest(): Boolean = popup?.let { !it.isSelector } == true
 
     companion object {
         private const val LONG_PRESS_MS = 350L

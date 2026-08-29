@@ -9,8 +9,11 @@ import com.vboard.app.R
 import com.vboard.app.VBoardApp
 import com.vboard.app.keyboard.ToolbarView
 import com.vboard.app.voice.VoiceEngines
+import com.vboard.core.correct.EditKind
 import com.vboard.core.correct.FixButtonState
 import com.vboard.core.correct.FixChunker
+import com.vboard.core.correct.FixEdit
+import com.vboard.core.correct.FixEdits
 import com.vboard.core.correct.FixRefusal
 import com.vboard.core.correct.FixResult
 import com.vboard.core.correct.FixStatus

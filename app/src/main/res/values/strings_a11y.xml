@@ -30,9 +30,6 @@
     <string name="a11y_action_paste">paste</string>
     <string name="a11y_action_clip_options">show clip options</string>
 
-    <!-- Long-press alternates popup. -->
-    <string name="a11y_alternate">Alternate %1$s</string>
-
     <!-- Suggestion strip. -->
     <string name="a11y_suggestion">%1$s, suggestion</string>
     <string name="a11y_suggestion_autocorrect">%1$s, autocorrect</string>

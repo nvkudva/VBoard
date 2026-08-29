@@ -4,12 +4,15 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeProvider
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import com.vboard.app.R
 
 /**
  * Emoji panel: category tabs on top, scrollable grid below, ABC/backspace row
@@ -66,12 +69,53 @@ class EmojiPanelView(
         )
     }
 
+    /** Test seams: the panel's three canvases, each with its own node provider. */
+    internal fun tabsForTest(): View = tabs
+
+    internal fun gridForTest(): View = grid
+
+    internal fun bottomBarForTest(): View = bottomBar
+
     private inner class TabBar : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textAlign = Paint.Align.CENTER
             textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 18f, resources.displayMetrics)
         }
         private val underline = Paint().apply { }
+
+        init {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+
+        private fun tabBounds(index: Int): RectF? {
+            if (width == 0 || index !in EmojiData.categories.indices) return null
+            val w = width.toFloat() / EmojiData.categories.size
+            return RectF(index * w, 0f, (index + 1) * w, height.toFloat())
+        }
+
+        private val a11y = object : VirtualCells(this) {
+            override fun count(): Int = EmojiData.categories.size
+
+            override fun boundsOf(id: Int): RectF? = tabBounds(id)
+
+            override fun descriptionOf(id: Int): CharSequence? =
+                EmojiData.categories.getOrNull(id)?.let {
+                    context.getString(R.string.a11y_emoji_category, context.getString(it.nameRes))
+                }
+
+            override fun classNameOf(id: Int): CharSequence = "android.widget.Tab"
+
+            override fun click(id: Int): Boolean {
+                if (id !in EmojiData.categories.indices) return false
+                selectCategory(id)
+                return true
+            }
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+        override fun onHoverEvent(event: MotionEvent): Boolean =
+            if (a11y.onHover(event)) true else super.onHoverEvent(event)
 
         override fun onDraw(canvas: Canvas) {
             canvas.drawColor(theme.suggestionBg)
@@ -90,16 +134,18 @@ class EmojiPanelView(
             if (event.actionMasked == MotionEvent.ACTION_UP) {
                 val idx = (event.x / (width / EmojiData.categories.size)).toInt()
                     .coerceIn(0, EmojiData.categories.size - 1)
-                if (idx != categoryIndex) {
-                    categoryIndex = idx
-                    scroll.scrollTo(0, 0)
-                    grid.requestLayout()
-                    grid.invalidate()
-                    invalidate()
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                }
+                selectCategory(idx)
             }
             return true
+        }
+
+        private fun selectCategory(index: Int) {
+            if (index == categoryIndex) return
+            categoryIndex = index
+            scroll.scrollTo(0, 0)
+            grid.onCategoryChanged()
+            invalidate()
+            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
     }
 
@@ -175,11 +221,16 @@ class EmojiPanelView(
 
 /** Curated common-emoji set; full system emoji picker is a v2 item. */
 object EmojiData {
-    data class Category(val icon: String, val emojis: List<String>)
+    /**
+     * [nameRes] is what a screen reader announces for the tab — the icon glyph
+     * alone reads as a single emoji, which says nothing about the category.
+     */
+    data class Category(val icon: String, val nameRes: Int, val emojis: List<String>)
 
     val categories = listOf(
         Category(
             "😀",
+            R.string.a11y_emoji_cat_smileys,
             listOf(
                 "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇",
                 "🙂", "😉", "😍", "🥰", "😘", "😗", "😋", "😜", "🤪", "😎",
@@ -192,6 +243,7 @@ object EmojiData {
         ),
         Category(
             "👋",
+            R.string.a11y_emoji_cat_people,
             listOf(
                 "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞",
                 "🤟", "🤘", "🤙", "👈", "👉", "👆", "👇", "☝️", "👍", "👎",
@@ -201,6 +253,7 @@ object EmojiData {
         ),
         Category(
             "🐶",
+            R.string.a11y_emoji_cat_nature,
             listOf(
                 "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯",
                 "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🐤", "🦆",
@@ -213,6 +266,7 @@ object EmojiData {
         ),
         Category(
             "🍕",
+            R.string.a11y_emoji_cat_food,
             listOf(
                 "🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐",
                 "🍈", "🍒", "🍑", "🥭", "🍍", "🥥", "🥝", "🍅", "🥑", "🥦",
@@ -225,6 +279,7 @@ object EmojiData {
         ),
         Category(
             "⚽",
+            R.string.a11y_emoji_cat_activity,
             listOf(
                 "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🎱", "🏓",
                 "🏸", "🏒", "🥅", "⛳", "🏹", "🎣", "🥊", "🥋", "🎽", "🛹",
@@ -237,6 +292,7 @@ object EmojiData {
         ),
         Category(
             "❤️",
+            R.string.a11y_emoji_cat_symbols,
             listOf(
                 "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
                 "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "☮️",

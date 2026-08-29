@@ -191,6 +191,7 @@ fun OnboardingFlow(
                     )
                     OnboardingStep.DONE -> DoneStep(
                         canDictate = canDictate,
+                        onAddVoice = { onStepChange(OnboardingStep.MODELS) },
                         onOpenSettings = onOpenSettings,
                         onClose = onFinished,
                     )
@@ -640,7 +641,8 @@ private fun PackRow(
             }
             // Enqueued-but-not-running is a real state the old service could not express:
             // the download is scheduled and the system is holding it for Wi-Fi.
-            if (scheduled?.waitingForNetwork == true && state != PackState.Installed) {
+            val waiting = scheduled?.waitingForNetwork == true && state != PackState.Installed
+            if (waiting) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -656,9 +658,7 @@ private fun PackRow(
                         )
                     }
                 }
-                return@Column
-            }
-            when (state) {
+            } else when (state) {
                 is PackState.Downloading -> {
                     Spacer(modifier = Modifier.height(8.dp))
                     val percent = (state.fraction * 100).toInt()
@@ -742,6 +742,7 @@ private fun PackStateChip(state: PackState) {
 @Composable
 private fun DoneStep(
     canDictate: Boolean,
+    onAddVoice: () -> Unit,
     onOpenSettings: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -761,11 +762,31 @@ private fun DoneStep(
             stringResource(R.string.setup_done_body_typing, sizes.requiredText)
         },
     ) {
-        Button(
-            onClick = onOpenSettings,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.onboarding_open_settings))
+        // Whatever brought the user here — finishing setup, the launcher icon, or the mic
+        // key's "Download" action — this screen must offer a live route to voice typing
+        // rather than congratulate them and stop. It was previously possible to arrive on a
+        // "You're all set" page with nothing installed and no way forward.
+        if (!canDictate) {
+            Button(
+                onClick = onAddVoice,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.setup_add_voice, sizes.requiredText))
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_open_settings))
+            }
+        } else {
+            Button(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.onboarding_open_settings))
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
         TextButton(onClick = onClose) {
