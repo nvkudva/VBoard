@@ -34,6 +34,31 @@
                 android:resource="@xml/method" />
         </service>
 
+        <!-- The refiner runs in its own process so a native OOM or a MediaPipe
+             crash inside a 0.5B model cannot take the keyboard down mid-sentence,
+             and so the keyboard's memory ceiling stops being set by an optional
+             feature (V2_PLAN Wave 0.5). Not exported: the only client is us. -->
+        <service
+            android:name=".llm.LlmRefinerService"
+            android:exported="false"
+            android:process=":llm" />
+
+        <!-- WorkManager is initialized on demand (VBoardApp implements
+             Configuration.Provider) instead of by androidx.startup, so the
+             keyboard process does not host the downloader's machinery. Removing
+             just this initializer leaves the startup provider available for
+             anything else that needs it. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <!-- Model downloads run as a WorkManager long-running worker (see
              ModelDownloadWorker), which hosts its foreground notification in WorkManager's
              own service. That service ships without a foregroundServiceType, and targetSdk
@@ -42,11 +67,13 @@
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
+            android:process=":ui"
             tools:node="merge" />
 
         <activity
             android:name=".onboarding.OnboardingActivity"
             android:exported="true"
+            android:process=":ui"
             android:theme="@style/Theme.VBoard">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -58,6 +85,7 @@
             android:name=".settings.SettingsActivity"
             android:exported="true"
             android:label="@string/settings_title"
+            android:process=":ui"
             android:theme="@style/Theme.VBoard"
             tools:ignore="ExportedActivity" />
     </application>

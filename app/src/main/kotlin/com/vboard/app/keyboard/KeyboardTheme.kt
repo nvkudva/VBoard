@@ -106,6 +106,14 @@ object KeyboardMetrics {
     const val KEY_RADIUS_DP = 8f
     const val SPACE_RADIUS_DP = 12f
     const val VOICE_BAR_HEIGHT_DP = 120f
+
+    /**
+     * The "+ bottom inset" DESIGN_SPEC §4.1 puts under the 120dp voice bar. The
+     * orb sits in the bottom 56dp control row and its amplitude halo grows to
+     * 88dp across, so without this the halo — and the bottom of the orb itself —
+     * was clipped by the view's edge.
+     */
+    const val VOICE_BAR_BOTTOM_INSET_DP = 20f
     const val KEY_LABEL_SP = 22f
     const val KEY_LABEL_SMALL_SP = 16f
     const val HINT_SP = 11f

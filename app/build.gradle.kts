@@ -76,6 +76,8 @@ android {
 
     buildFeatures {
         compose = true
+        // The keyboard talks to the refiner process over ILlmRefiner.aidl.
+        aidl = true
     }
 
     lint {

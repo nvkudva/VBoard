@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import android.util.Log
 import androidx.datastore.preferences.core.Preferences
 import com.vboard.app.R
+import com.vboard.app.VBoardApp
 import com.vboard.app.clipboard.ClipboardStore
 import com.vboard.app.keyboard.ThemeMode
 import com.vboard.app.models.ModelDownloadService
@@ -264,6 +265,15 @@ fun SettingsScreen(
             }
             item {
                 SwitchRow(
+                    title = "Dictate on the keyboard",
+                    subtitle = "The mic key listens without hiding the keys, so you can " +
+                        "keep typing. Typing stops listening. Off shows the full voice bar.",
+                    checked = snapshot.inlineDictation,
+                    onCheckedChange = { onSetBoolean(SettingsRepository.Keys.INLINE_DICTATION, it) },
+                )
+            }
+            item {
+                SwitchRow(
                     title = "Remove filler words",
                     subtitle = "Drops \"um\", \"uh\", and similar sounds.",
                     checked = snapshot.removeFillers,
@@ -348,6 +358,26 @@ fun SettingsScreen(
 
             // ------------------------------------------------------- Models
             item { SectionHeader(stringResource(R.string.settings_group_models)) }
+            item {
+                // Where the download went is worth stating, because the whole
+                // point of the location is what happens to it on uninstall.
+                val outside =
+                    (context.applicationContext as? VBoardApp)?.modelStore?.isOutsideAppData == true
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.settings_models_location)) },
+                    supportingContent = {
+                        Text(
+                            stringResource(
+                                if (outside) {
+                                    R.string.settings_models_location_shared
+                                } else {
+                                    R.string.settings_models_location_internal
+                                },
+                            ),
+                        )
+                    },
+                )
+            }
             items(count = ModelCatalog.packs.size) { index ->
                 val pack = ModelCatalog.packs[index]
                 ModelPackRow(

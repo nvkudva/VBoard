@@ -9,10 +9,19 @@ import com.vboard.core.text.FieldKind
 data class EditorProfile(
     val fieldKind: FieldKind,
     val enterIcon: KeyIcon,
+    /**
+     * The action Enter performs, already resolved against the editor's wishes:
+     * [EditorInfo.IME_ACTION_NONE] means Enter inserts a newline instead. A
+     * multiline field, `IME_FLAG_NO_ENTER_ACTION`, and an unspecified action
+     * all land here as NONE, so the key has one rule to follow.
+     */
     val imeActionId: Int,
     val isMultiline: Boolean,
     val noPersonalizedLearning: Boolean,
 ) {
+    /** True when Enter fires [imeActionId] rather than inserting a newline. */
+    val performsImeAction: Boolean get() = imeActionId != EditorInfo.IME_ACTION_NONE
+
     companion object {
         fun from(info: EditorInfo?): EditorProfile {
             info ?: return EditorProfile(FieldKind.TEXT, KeyIcon.ENTER, EditorInfo.IME_ACTION_NONE, false, false)
@@ -43,10 +52,32 @@ data class EditorProfile(
             val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
             val noEnterAction = (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
             val multiline = (info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0
-            val enterIcon = when {
-                noEnterAction || multiline -> KeyIcon.ENTER
-                action == EditorInfo.IME_ACTION_SEARCH -> KeyIcon.SEARCH
-                action == EditorInfo.IME_ACTION_SEND -> KeyIcon.SEND
+            // An editor that wants a literal newline — a multiline field, or one
+            // that set IME_FLAG_NO_ENTER_ACTION — keeps the newline even when it
+            // also declares an action for the toolbar-style button next to it.
+            val enterAction = if (noEnterAction || multiline) {
+                EditorInfo.IME_ACTION_NONE
+            } else {
+                when (action) {
+                    EditorInfo.IME_ACTION_GO,
+                    EditorInfo.IME_ACTION_SEARCH,
+                    EditorInfo.IME_ACTION_SEND,
+                    EditorInfo.IME_ACTION_NEXT,
+                    EditorInfo.IME_ACTION_PREVIOUS,
+                    EditorInfo.IME_ACTION_DONE,
+                    -> action
+                    // NONE and UNSPECIFIED both mean "no action to fire".
+                    else -> EditorInfo.IME_ACTION_NONE
+                }
+            }
+
+            val enterIcon = when (enterAction) {
+                EditorInfo.IME_ACTION_GO -> KeyIcon.GO
+                EditorInfo.IME_ACTION_SEARCH -> KeyIcon.SEARCH
+                EditorInfo.IME_ACTION_SEND -> KeyIcon.SEND
+                EditorInfo.IME_ACTION_NEXT -> KeyIcon.NEXT
+                EditorInfo.IME_ACTION_PREVIOUS -> KeyIcon.PREVIOUS
+                EditorInfo.IME_ACTION_DONE -> KeyIcon.DONE
                 else -> KeyIcon.ENTER
             }
 
@@ -56,7 +87,7 @@ data class EditorProfile(
             return EditorProfile(
                 fieldKind = fieldKind,
                 enterIcon = enterIcon,
-                imeActionId = action,
+                imeActionId = enterAction,
                 isMultiline = multiline,
                 noPersonalizedLearning = noLearning,
             )

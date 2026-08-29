@@ -66,4 +66,9 @@
     <string name="a11y_ai_fix_off_password">AI fix, unavailable. Turned off in password fields.</string>
     <string name="a11y_ai_fix_off_address">AI fix, unavailable. Turned off in email and web address fields.</string>
     <string name="a11y_ai_fix_off_number">AI fix, unavailable. Turned off in number fields.</string>
+
+    <!-- Model storage location, stated because uninstall behaviour depends on it. -->
+    <string name="settings_models_location">Where models are stored</string>
+    <string name="settings_models_location_shared">Shared storage (Android/media/com.vboard.app). Kept when you uninstall on most devices, so you do not download them again.</string>
+    <string name="settings_models_location_internal">App storage. This device has no usable shared storage, so uninstalling removes the models.</string>
 </resources>

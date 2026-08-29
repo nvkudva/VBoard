@@ -69,6 +69,13 @@ class VBoardImeService : InputMethodService() {
 
 
 
+    /**
+     * True while dictation is running *on* the keyboard rather than behind the
+     * voice bar: the keys stay live, nothing streams a preview, and the first
+     * keystroke ends the session (see [stopInlineVoiceForTyping]).
+     */
+    private var voiceInline = false
+
     private var theme: KeyboardTheme = KeyboardTheme.LIGHT
     private var profile: EditorProfile = EditorProfile.from(null)
     private var layer: KeyboardLayer = KeyboardLayer.LETTERS
@@ -116,6 +123,8 @@ class VBoardImeService : InputMethodService() {
         // next press builds fresh views; removeView also detaches them, which is
         // what stops their animators.
         voiceController?.cancelSessionSilently()
+        // The keyboard this session's mic halo was drawn on is being replaced.
+        voiceInline = false
         detachPanel(voiceBar)
         voiceBar?.listener = null
         voiceBar = null
@@ -329,6 +338,10 @@ class VBoardImeService : InputMethodService() {
 
     private val keyListener = object : KeyboardView.Listener {
         override fun onKeyAction(action: KeyAction, shifted: Boolean) {
+            // Typing wins over listening: the mic is cut before the keystroke is
+            // applied, so nothing spoken after this point can reach the field.
+            // The mic key itself is the toggle and stops the session on its own.
+            if (action != KeyAction.Mic) stopInlineVoiceForTyping()
             when (action) {
                 is KeyAction.Text -> onText(action.text, shifted)
                 KeyAction.Backspace -> onBackspace()
@@ -345,11 +358,13 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun onKeyLongPressText(text: String) {
+            stopInlineVoiceForTyping()
             onText(text, shifted = false, fromLongPress = true)
         }
 
         override fun onSpacebarCursorMove(steps: Int) {
             if (steps == 0) return
+            stopInlineVoiceForTyping()
             commitComposingAsIs()
             val ic = currentInputConnection ?: return
             val key = if (steps > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
@@ -413,11 +428,10 @@ class VBoardImeService : InputMethodService() {
         val ic = currentInputConnection ?: return
         clipboard.dismissChip()
         finishComposing(applyAutocorrect = false)
-        val action = profile.imeActionId
-        if (!profile.isMultiline && action != EditorInfo.IME_ACTION_NONE &&
-            action != EditorInfo.IME_ACTION_UNSPECIFIED
-        ) {
-            ic.performEditorAction(action)
+        // EditorProfile has already decided whether this field wants its action
+        // (Go, Search, Send, Next, Previous, Done) or a literal newline.
+        if (profile.performsImeAction) {
+            ic.performEditorAction(profile.imeActionId)
         } else {
             ic.commitText("\n", 1)
         }
@@ -557,6 +571,8 @@ class VBoardImeService : InputMethodService() {
     }
 
     private fun pickSuggestion(suggestion: Suggestion) {
+        // Picking a word is typing: same rule as the keys above.
+        stopInlineVoiceForTyping()
         val ic = currentInputConnection ?: return
         ic.setComposingText(suggestion.text, 1)
         ic.finishComposingText()
@@ -736,16 +752,69 @@ class VBoardImeService : InputMethodService() {
 
     // ------------------------------------------------------------------- voice
 
-    private fun startVoice() {
-        if (!profile.fieldKind.allowsVoice) return
-        commitComposingAsIs()
-        strip.clearSuggestions()
+    /** The 120dp bar plus the bottom inset its orb halo needs (DESIGN_SPEC §4.1). */
+    private fun voiceBarHeightPx(): Int = dp(
+        (KeyboardMetrics.VOICE_BAR_HEIGHT_DP + KeyboardMetrics.VOICE_BAR_BOTTOM_INSET_DP).toInt(),
+    )
 
-        val controller = voiceController ?: VoiceSessionController(
+    private fun ensureVoiceController(): VoiceSessionController =
+        voiceController ?: VoiceSessionController(
             service = this,
             app = app,
             host = voiceHost,
         ).also { voiceController = it }
+
+    /**
+     * Dictation without leaving the keyboard. Nothing is shown but the mic key's
+     * halo — no transcript, no partials — because the field itself is visible
+     * behind the keyboard and each finished utterance lands at the cursor.
+     */
+    private fun startInlineVoice() {
+        voiceInline = true
+        keyboardView.micActive = true
+        ensureVoiceController().startSession(profile.fieldKind, settings)
+    }
+
+    /**
+     * Any keystroke while an inline session is live. The buffered audio is
+     * finalized rather than dropped (VB-107: what was said still reaches the
+     * field), so a phrase already spoken lands at the cursor a moment after the
+     * typed character rather than disappearing.
+     */
+    private fun stopInlineVoiceForTyping() {
+        if (!voiceInline) return
+        voiceController?.stopAndFinalize()
+    }
+
+    /** The screen that can grant the mic permission or fetch a missing model. */
+    private fun openOnboarding() {
+        startActivity(
+            Intent(this, OnboardingActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    /** Clears the inline session's only UI. Safe to call when none is running. */
+    private fun endInlineVoice() {
+        voiceInline = false
+        if (viewsReady()) keyboardView.micActive = false
+    }
+
+    private fun startVoice() {
+        if (!profile.fieldKind.allowsVoice) return
+        // The mic key is the stop button in inline mode: there is no orb to tap.
+        if (voiceInline) {
+            voiceController?.stopAndFinalize()
+            return
+        }
+        commitComposingAsIs()
+        strip.clearSuggestions()
+        if (settings.inlineDictation) {
+            startInlineVoice()
+            return
+        }
+
+        val controller = ensureVoiceController()
 
         val bar = voiceBar ?: VoiceBarView(this, theme).also { bar ->
             voiceBar = bar
@@ -757,9 +826,7 @@ class VBoardImeService : InputMethodService() {
                         VoiceBarView.ErrorActionKind.OPEN_PERMISSION,
                         VoiceBarView.ErrorActionKind.OPEN_DOWNLOAD,
                         -> {
-                            val intent = Intent(this@VBoardImeService, OnboardingActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(intent)
+                            openOnboarding()
                             controller.cancelSession()
                         }
                         VoiceBarView.ErrorActionKind.DISMISS -> controller.cancelSession()
@@ -772,7 +839,7 @@ class VBoardImeService : InputMethodService() {
                 bar,
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
-                    dp(KeyboardMetrics.VOICE_BAR_HEIGHT_DP.toInt()),
+                    voiceBarHeightPx(),
                 ),
             )
         }
@@ -788,6 +855,10 @@ class VBoardImeService : InputMethodService() {
         override fun fieldKind(): FieldKind = profile.fieldKind
 
         override fun updatePartial(text: String) {
+            // Inline dictation deliberately shows no streaming preview: the
+            // field is what the user is looking at, and only finished
+            // utterances go into it.
+            if (voiceInline) return
             voiceBar?.showPartial(text)
         }
 
@@ -798,10 +869,17 @@ class VBoardImeService : InputMethodService() {
                 Log.w(TAG, "no input connection; dictated utterance $index dropped")
                 return
             }
+            // A half-typed word owns the composing region in inline mode;
+            // committing dictated text over it would swallow what was typed.
+            if (voiceInline) commitComposingAsIs()
             val joined = CommitPlanner.joinForInsertion(this@VBoardImeService.precedingText(4), text)
             ic.commitText(joined, 1)
             voiceCommits[index] = joined
-            voiceBar?.showCommitted(text)
+            if (!voiceInline) voiceBar?.showCommitted(text)
+            if (voiceInline && viewsReady()) {
+                updateShiftForContext()
+                refreshSuggestions()
+            }
         }
 
         override fun replaceUtterance(index: Int, newText: String) {
@@ -833,29 +911,48 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun showError(message: String, action: VoiceBarView.ErrorActionKind) {
+            if (voiceInline) {
+                // There is no bar to put the message in, so the message becomes a
+                // toast — and the two errors the user can actually do something
+                // about (no mic permission, no model) still open onboarding,
+                // which is exactly what tapping the bar's inline action did.
+                Toast.makeText(this@VBoardImeService, message, Toast.LENGTH_LONG).show()
+                if (action != VoiceBarView.ErrorActionKind.DISMISS) openOnboarding()
+                return
+            }
             voiceBar?.showError(message, action)
         }
 
         override fun showListening() {
+            if (voiceInline) {
+                if (viewsReady()) keyboardView.micActive = true
+                return
+            }
             voiceBar?.showListening()
         }
 
         override fun showFinalizing() {
+            if (voiceInline) return
             voiceBar?.showFinalizing()
         }
 
         override fun showRefining() {
+            if (voiceInline) return
             voiceBar?.showRefining()
         }
 
         override fun onAmplitude(rms: Float) {
+            if (voiceInline) {
+                if (viewsReady()) keyboardView.setMicAmplitude(rms)
+                return
+            }
             voiceBar?.setAmplitude(rms)
         }
     }
 
     private fun animateToVoiceBar(bar: VoiceBarView) {
         val from = keyboardView.height.takeIf { it > 0 } ?: dp(298)
-        val to = dp(KeyboardMetrics.VOICE_BAR_HEIGHT_DP.toInt())
+        val to = voiceBarHeightPx()
         keyboardView.visibility = View.GONE
         emojiPanel?.visibility = View.GONE
         clipboardPanel?.dismissActionMenu()
@@ -892,6 +989,7 @@ class VBoardImeService : InputMethodService() {
                 voiceController?.cancelSessionSilently()
             }
         }
+        endInlineVoice()
         // Resetting the bar here is what stops its infinite breathing animator
         // (the view stays attached, so onDetachedFromWindow never runs) and
         // clears one app's transcript before it can be shown in the next.

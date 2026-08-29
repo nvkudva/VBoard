@@ -2,6 +2,7 @@ package com.vboard.app
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import androidx.work.Configuration
 import android.util.Log
 import com.vboard.app.models.AndroidFetcher
 import com.vboard.app.models.ModelStore
@@ -28,7 +29,28 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.Executors
 
-class VBoardApp : Application() {
+class VBoardApp : Application(), Configuration.Provider {
+
+    /**
+     * The keyboard process, as opposed to `:ui` (settings, onboarding, the model
+     * downloader) and `:llm` (the refiner). Application.onCreate runs in every
+     * one of them, and most of what it sets up only the keyboard has any use for
+     * (V2_PLAN Wave 0.5).
+     */
+    private val isKeyboardProcess: Boolean
+        get() = Application.getProcessName() == packageName
+
+    /**
+     * WorkManager is initialized on demand rather than by androidx.startup (see
+     * the manifest), and its workers are pinned to `:ui`. That is the second
+     * half of the process split: model downloads used to run in the keyboard
+     * process, so a several-hundred-megabyte transfer shared a memory budget
+     * with the thing the user is typing into.
+     */
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setDefaultProcessName("$packageName:ui")
+            .build()
 
     lateinit var appScope: CoroutineScope
         private set
@@ -90,8 +112,16 @@ class VBoardApp : Application() {
         packInstaller = PackInstaller(
             rootDir = modelStore.rootDir.toPath(),
             fetcher = AndroidFetcher(),
-            freeBytes = { filesDir.usableSpace },
+            // The volume the packs actually land on, which is no longer
+            // necessarily the one filesDir is on.
+            freeBytes = { modelStore.rootDir.usableSpace },
         )
+        // Packs installed by an older build still live in app data, which an
+        // uninstall would take with it. Moving ~1GB is not startup work: this
+        // process keeps reading them where they are and the copy is picked up on
+        // the next start.
+        appScope.launch(Dispatchers.IO) { modelStore.migrateFromInternalStorage() }
+        if (!isKeyboardProcess) return
         appScope.launch(suggestDispatcher) {
             val history = if (historyFile.exists()) {
                 runCatching { UserHistory.restore(historyFile.readText()) }
@@ -155,10 +185,11 @@ class VBoardApp : Application() {
     // ------------------------------------------------------------ memory
 
     /**
-     * The ASR pair plus the refiner pin on the order of 1.2GB of native memory,
-     * and nothing ever released it: one dictation held it for the life of the
-     * keyboard process. The refiner is the biggest and the least urgent, so it
-     * goes as soon as the UI is hidden; real pressure drops everything.
+     * The ASR pair pins several hundred megabytes of native memory and nothing
+     * ever released it: one dictation held it for the life of the keyboard
+     * process. Dropping the refiner now means dropping the binder to `:llm`,
+     * which is what lets that process — and the model inside it — be reclaimed;
+     * it goes as soon as the UI is hidden, and real pressure drops everything.
      */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)

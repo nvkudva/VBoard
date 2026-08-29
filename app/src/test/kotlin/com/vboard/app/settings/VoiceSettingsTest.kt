@@ -38,6 +38,13 @@ class VoiceSettingsTest {
     }
 
     @Test
+    fun `dictating on the keyboard is the shipped default`() {
+        // The mic key keeps the keys on screen unless the user turns this off,
+        // in which case the full voice bar takes over as before.
+        assertEquals(true, SettingsSnapshot().inlineDictation)
+    }
+
+    @Test
     fun `raw transcript mode still disables cleanup with the new field present`() {
         // The snapshot gained a field; this is the cheap regression guard that
         // its default did not disturb anything downstream of it.

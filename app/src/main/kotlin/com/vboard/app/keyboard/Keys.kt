@@ -21,7 +21,12 @@ sealed interface KeyAction {
     data object ToClipboard : KeyAction
 }
 
-enum class KeyIcon { NONE, BACKSPACE, SHIFT, SHIFT_FILLED, CAPS_LOCK, ENTER, SEARCH, SEND, MIC, EMOJI, GLOBE }
+enum class KeyIcon {
+    NONE, BACKSPACE, SHIFT, SHIFT_FILLED, CAPS_LOCK, ENTER, MIC, EMOJI, GLOBE,
+
+    /** The six IME actions Enter can stand in for; see [com.vboard.app.ime.EditorProfile]. */
+    GO, SEARCH, SEND, NEXT, PREVIOUS, DONE,
+}
 
 data class Key(
     val action: KeyAction,

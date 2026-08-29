@@ -58,6 +58,26 @@ Watch it with `gh run watch`. The release appears at
 To rebuild an existing tag without moving it, run the workflow manually:
 `gh workflow run release.yml -f tag=v1.0.0-alpha.1`.
 
+## Releasing without permission to push tags
+
+Some callers can push branches but not tags — an agent session, or anyone whose
+access is scoped that way. Those runs name the commit to cut the tag from and
+let the workflow create it:
+
+```
+gh workflow run release.yml -f tag=v1.0.0-alpha.3 -f ref=my-branch
+```
+
+The workflow creates the tag at `ref`, then builds and publishes exactly as a
+tag push would. Two things it will not do: create a tag whose name does not
+start with `v`, and touch a tag that already exists — moving one rewrites what a
+published release points at, and everyone who already downloaded that APK has no
+way to find out. Cut a new version instead.
+
+`workflow_dispatch` only offers a workflow that is on the **default branch**, so
+this path works once the change is merged to `main`, whatever branch is being
+released.
+
 ## How versioning works
 
 - `versionName` comes from the tag with the leading `v` stripped —

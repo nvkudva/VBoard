@@ -1,7 +1,7 @@
 # VBoard V2 Plan
 
-Status: **approved and partly built.** Wave 1.5 (§3) has landed in full; nothing
-else in this plan has started. Wave 0.5 is the next item.
+Status: **approved and partly built.** Wave 1.5 (§3) has landed in full, and so
+has Wave 0.5 (the process split). Wave 0 is the next item.
 Date: 2026-08-29 · Sources: product, design, engineering-management and performance
 reviews, plus two rounds of recorded debate between product and design.
 
@@ -78,11 +78,28 @@ Concurrency: W0.3 ∥ W0.4 can run together, and both are disjoint from Wave 1.5
 work. W0.1 and W0.2 both want `VBoardImeService.kt` and are strictly sequential —
 **W0.2 first**, because it is the bug.
 
-### Wave 0.5 — Process split (decided)
+### Wave 0.5 — Process split ✅ landed
 
-**The LLM refiner moves out of the keyboard process.** Decided; not yet scheduled
-against a wave slot, but it belongs before beta because it is the one change that
-alters the crash surface rather than the feature set.
+**The LLM refiner moves out of the keyboard process.** It belonged before beta
+because it is the one change that alters the crash surface rather than the
+feature set.
+
+What landed: the refiner runs in `:llm` behind `ILlmRefiner.aidl`
+(`app/llm/LlmRefinerService.kt` owns the model and serializes calls;
+`LlmRefinerClient` owns the connection and reports every remote failure as the
+same null-or-`SmartFailure` the in-process refiner reported, so the callers'
+"keep the rules-only text" paths already cover a model process that dies
+mid-call). Activities, the download worker and WorkManager's foreground service
+run in `:ui`, with WorkManager initialized on demand and pinned there rather
+than started by `androidx.startup` in whichever process comes up first.
+`VBoardApp` now knows which process it is in and skips the lexicon and
+learned-word history in the two that never type.
+
+What did **not** change, and should not be claimed: generation is still one
+blocking call, so a timeout stops the caller waiting rather than the model
+working. The `replaceUtterance` guard (refuse the replacement when the text
+before the cursor has moved) is what keeps a late refinement honest, and it is
+now load-bearing rather than defensive.
 
 Why it matters, from [PERFORMANCE_REVIEW.md §7](PERFORMANCE_REVIEW.md): the IME
 process today also hosts Compose, settings, onboarding and the downloader. A

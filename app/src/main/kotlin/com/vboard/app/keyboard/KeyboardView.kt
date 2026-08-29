@@ -16,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeProvider
 import android.view.inputmethod.InputMethodManager
 import com.vboard.app.R
 import com.vboard.core.keyboard.KeyboardHeights
+import kotlin.math.sin
 
 /**
  * Custom-drawn keyboard (all layers except emoji). One view draws every key:
@@ -90,6 +91,63 @@ class KeyboardView(
             }
         }
 
+    /**
+     * Dictation is running *on* the keyboard (inline mode): the keys stay live
+     * and the mic key breathes instead of the voice bar's orb. Purely a display
+     * state — the session itself lives in the IME service.
+     */
+    var micActive: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (value) {
+                micPulseAnimator.start()
+            } else {
+                micPulseAnimator.cancel()
+                micHaloLevel = 0f
+            }
+            a11y.notifyContentChanged()
+            invalidateMicKey()
+        }
+
+    /** Smoothed 0..1 input level driving the mic key's halo, as on the orb. */
+    private var micHaloLevel = 0f
+
+    private val micPulseAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1200
+        repeatCount = android.animation.ValueAnimator.INFINITE
+        interpolator = android.view.animation.LinearInterpolator()
+        addUpdateListener { invalidateMicKey() }
+    }
+
+    /**
+     * Feeds the mic key's halo. Same 50ms attack / 300ms release shape the orb
+     * uses, so the two surfaces react identically to the same voice.
+     */
+    fun setMicAmplitude(rms: Float) {
+        if (!micActive) return
+        val level = rms.coerceIn(0f, 1f)
+        micHaloLevel = if (level > micHaloLevel) level else micHaloLevel * 0.92f
+        invalidateMicKey()
+    }
+
+    /** Repaints just the mic key and the ring around it, not all 30-odd keys. */
+    private fun invalidateMicKey() {
+        val bounds = keyBounds.firstOrNull { it.key.action == KeyAction.Mic }?.bounds
+        if (bounds == null) {
+            invalidate()
+            return
+        }
+        val cx = bounds.centerX()
+        val cy = bounds.centerY()
+        val r = micHaloBaseRadius(bounds) + dp(MIC_HALO_MAX_DP) + 1f
+        invalidate((cx - r).toInt(), (cy - r).toInt(), (cx + r).toInt(), (cy + r).toInt())
+    }
+
+    /** A circle that just encloses the key, so the halo clears it on every side. */
+    private fun micHaloBaseRadius(bounds: RectF): Float =
+        maxOf(bounds.width(), bounds.height()) / 2f
+
     private data class KeyBound(val key: Key, val bounds: RectF, val row: Int)
 
     private var keyBounds: List<KeyBound> = emptyList()
@@ -117,6 +175,7 @@ class KeyboardView(
         strokeJoin = Paint.Join.ROUND
     }
     private val iconFillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val micHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val handler2 = Handler(Looper.getMainLooper())
     private var popup: KeyPopup? = null
@@ -224,9 +283,27 @@ class KeyboardView(
                 else -> theme.keySurface
             }
             val r = if (key.action == KeyAction.Space) spaceRadius else radius
+            if (micActive && key.action == KeyAction.Mic) drawMicHalo(canvas, kb)
             canvas.drawRoundRect(kb.bounds, r, r, keyPaint)
             drawKeyContent(canvas, kb, disabledMic)
         }
+    }
+
+    /**
+     * The whole of the inline-dictation feedback: a breathing, amplitude-reactive
+     * ring around the mic key. DESIGN_SPEC §4.2 V2 gives the orb a 1200ms sine
+     * breath and a halo of `micPulse` at 24 % alpha; this is the same motion at
+     * key scale, which is why there is no transcript to look at in this mode.
+     */
+    private fun drawMicHalo(canvas: Canvas, kb: KeyBound) {
+        val breath = (sin(micPulseAnimator.animatedFraction * 2 * Math.PI) * 0.5 + 0.5).toFloat()
+        // Grows to MIC_HALO_MAX_DP past the key: 6dp of it follows the voice,
+        // 2dp is the idle breath, 2dp is the gap that keeps the ring visible
+        // when the speaker is silent.
+        val radius = micHaloBaseRadius(kb.bounds) +
+            dp(2f) + dp(6f) * micHaloLevel + dp(2f) * breath
+        micHaloPaint.color = theme.micPulse.withAlphaFraction(0.24f)
+        canvas.drawCircle(kb.bounds.centerX(), kb.bounds.centerY(), radius, micHaloPaint)
     }
 
     private fun drawKeyContent(canvas: Canvas, kb: KeyBound, disabledMic: Boolean) {
@@ -349,6 +426,24 @@ class KeyboardView(
                 p.close()
                 canvas.drawPath(p, iconFillPaint)
             }
+            KeyIcon.GO -> {
+                drawArrow(canvas, cx, cy, s, pointsRight = true)
+            }
+            KeyIcon.NEXT -> {
+                drawArrow(canvas, cx - s * 0.15f, cy, s * 0.85f, pointsRight = true)
+                canvas.drawLine(cx + s * 0.8f, cy - s * 0.6f, cx + s * 0.8f, cy + s * 0.6f, iconPaint)
+            }
+            KeyIcon.PREVIOUS -> {
+                drawArrow(canvas, cx + s * 0.15f, cy, s * 0.85f, pointsRight = false)
+                canvas.drawLine(cx - s * 0.8f, cy - s * 0.6f, cx - s * 0.8f, cy + s * 0.6f, iconPaint)
+            }
+            KeyIcon.DONE -> {
+                val p = android.graphics.Path()
+                p.moveTo(cx - s * 0.8f, cy)
+                p.lineTo(cx - s * 0.2f, cy + s * 0.6f)
+                p.lineTo(cx + s * 0.8f, cy - s * 0.6f)
+                canvas.drawPath(p, iconPaint)
+            }
             KeyIcon.MIC -> {
                 val mw = s * 0.42f
                 canvas.drawRoundRect(
@@ -374,6 +469,17 @@ class KeyboardView(
             }
             KeyIcon.NONE -> Unit
         }
+    }
+
+    /** Shaft plus head, drawn horizontally; [s] is the half-length of the shaft. */
+    private fun drawArrow(canvas: Canvas, cx: Float, cy: Float, s: Float, pointsRight: Boolean) {
+        val dir = if (pointsRight) 1f else -1f
+        canvas.drawLine(cx - s * dir, cy, cx + s * dir, cy, iconPaint)
+        val p = android.graphics.Path()
+        p.moveTo(cx + (s - s * 0.55f) * dir, cy - s * 0.5f)
+        p.lineTo(cx + s * dir, cy)
+        p.lineTo(cx + (s - s * 0.55f) * dir, cy + s * 0.5f)
+        canvas.drawPath(p, iconPaint)
     }
 
     // ------------------------------------------------------------------ touch
@@ -624,6 +730,9 @@ class KeyboardView(
     override fun onDetachedFromWindow() {
         cancelTimers()
         dismissPopup()
+        // Infinite animator: without this it keeps posting frames for the life
+        // of the process, exactly as the voice bar's breath once did.
+        micPulseAnimator.cancel()
         super.onDetachedFromWindow()
     }
 
@@ -710,11 +819,17 @@ class KeyboardView(
         // the icon exists, so the description is ready for it.
         key.icon == KeyIcon.GLOBE -> context.getString(R.string.a11y_switch_keyboard)
         else -> when (val action = key.action) {
-            KeyAction.Mic -> context.getString(R.string.a11y_mic_key)
+            KeyAction.Mic -> context.getString(
+                if (micActive) R.string.a11y_mic_key_listening else R.string.a11y_mic_key,
+            )
             KeyAction.Backspace -> context.getString(R.string.a11y_backspace)
             KeyAction.Enter -> when (enterIcon) {
+                KeyIcon.GO -> context.getString(R.string.a11y_enter_go)
                 KeyIcon.SEARCH -> context.getString(R.string.a11y_enter_search)
                 KeyIcon.SEND -> context.getString(R.string.a11y_enter_send)
+                KeyIcon.NEXT -> context.getString(R.string.a11y_enter_next)
+                KeyIcon.PREVIOUS -> context.getString(R.string.a11y_enter_previous)
+                KeyIcon.DONE -> context.getString(R.string.a11y_enter_done)
                 else -> context.getString(R.string.a11y_enter)
             }
             KeyAction.Space -> context.getString(R.string.a11y_space)
@@ -766,6 +881,9 @@ class KeyboardView(
         return keyBounds.indexOfFirst { it.key.action == action }
     }
 
+    /** Test seam: the inline-dictation halo is animating. */
+    internal fun micPulseRunningForTest(): Boolean = micPulseAnimator.isStarted
+
     /** Test seam: a key preview bubble (not a selector) is on screen. */
     internal fun previewShowingForTest(): Boolean = popup?.let { !it.isSelector } == true
 
@@ -775,5 +893,8 @@ class KeyboardView(
         private const val REPEAT_INITIAL_DELAY_MS = 400L
         private const val REPEAT_START_MS = 90L
         private const val REPEAT_MIN_MS = 34L
+
+        /** How far past the mic key's edge the listening halo can reach. */
+        private const val MIC_HALO_MAX_DP = 10f
     }
 }

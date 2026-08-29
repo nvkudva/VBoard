@@ -42,6 +42,12 @@ data class SettingsSnapshot(
      */
     val clipboardClearedAt: Long = 0L,
     // Voice
+    /**
+     * Dictate without leaving the keyboard: the mic key starts listening in
+     * place, the keys stay live, and spoken words land at the cursor. Off falls
+     * back to the full-screen voice bar with its streaming transcript.
+     */
+    val inlineDictation: Boolean = true,
     val removeFillers: Boolean = true,
     val aggressiveFillers: Boolean = false,
     val resolveSelfCorrections: Boolean = true,
@@ -89,6 +95,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         val CLIPBOARD_HISTORY = booleanPreferencesKey("clipboard_history")
         val CLIPBOARD_SUGGESTIONS = booleanPreferencesKey("clipboard_suggestions")
         val CLIPBOARD_CLEARED_AT = longPreferencesKey("clipboard_cleared_at")
+        val INLINE_DICTATION = booleanPreferencesKey("inline_dictation")
         val FILLERS = booleanPreferencesKey("remove_fillers")
         val FILLERS_AGGRESSIVE = booleanPreferencesKey("aggressive_fillers")
         val SELF_CORRECT = booleanPreferencesKey("self_corrections")
@@ -118,6 +125,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         clipboardHistoryEnabled = this[Keys.CLIPBOARD_HISTORY] ?: true,
         clipboardSuggestionsEnabled = this[Keys.CLIPBOARD_SUGGESTIONS] ?: true,
         clipboardClearedAt = this[Keys.CLIPBOARD_CLEARED_AT] ?: 0L,
+        inlineDictation = this[Keys.INLINE_DICTATION] ?: true,
         removeFillers = this[Keys.FILLERS] ?: true,
         aggressiveFillers = this[Keys.FILLERS_AGGRESSIVE] ?: false,
         resolveSelfCorrections = this[Keys.SELF_CORRECT] ?: true,

@@ -158,6 +158,29 @@ class KeyboardViewA11yTest {
         assertEquals("Search", description(view, enter))
         view.enterIcon = KeyIcon.SEND
         assertEquals("Send", description(view, enter))
+        view.enterIcon = KeyIcon.GO
+        assertEquals("Go", description(view, enter))
+        view.enterIcon = KeyIcon.NEXT
+        assertEquals("Next", description(view, enter))
+        view.enterIcon = KeyIcon.PREVIOUS
+        assertEquals("Previous", description(view, enter))
+        view.enterIcon = KeyIcon.DONE
+        assertEquals("Done", description(view, enter))
+        view.enterIcon = KeyIcon.ENTER
+        assertEquals("Enter", description(view, enter))
+    }
+
+    @Test
+    fun `the mic key announces that it is listening during inline dictation`() {
+        val view = keyboard()
+        val mic = view.keyIndexOfActionForTest(KeyAction.Mic)
+        assertEquals("Voice typing", description(view, mic))
+
+        view.micActive = true
+        assertEquals("Voice typing, listening. Double-tap to stop.", description(view, mic))
+
+        view.micActive = false
+        assertEquals("Voice typing", description(view, mic))
     }
 
     @Test
