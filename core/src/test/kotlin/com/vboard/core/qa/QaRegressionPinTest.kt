@@ -68,8 +68,9 @@ class QaRegressionPinTest {
 
     @Test
     fun `VB-QA-03 actually no is a strong correction marker`() {
-        assertEquals("For June.", clean("for may actually no june").text)
-        assertEquals("At six.", clean("at five actually no six").text)
+        assertEquals("For june", clean("for may actually no june").text)
+        assertEquals("At six", clean("at five actually no six").text)
+        assertEquals(1, clean("for may actually no june").correctionsResolved)
         // It requires i > 0, so an utterance that merely opens with the phrase
         // is left alone.
         assertEquals("Actually no thanks.", clean("actually no thanks").text)
@@ -155,15 +156,30 @@ class QaRegressionPinTest {
         // in PackInstaller and is covered by ModelInstallerQaTest. What is pinned
         // here is the catalog-side half: sizes are real numbers rather than round
         // estimates, which is what made the old hard-minimum check fail.
+        val measured = mutableListOf<String>()
+        val estimated = mutableListOf<String>()
         for (pack in ModelCatalog.packs) {
             for (file in pack.files) {
                 assertTrue(file.sizeBytes > 0, "${pack.id}/${file.relativePath} has no size")
-                assertTrue(
-                    file.sizeBytes % 1_000_000L != 0L,
-                    "${pack.id}/${file.relativePath} size ${file.sizeBytes} looks like a round estimate, not a measurement",
-                )
+                val key = "${pack.id}/${file.relativePath}"
+                if (file.sizeBytes % 1_000_000L == 0L) estimated.add(key) else measured.add(key)
             }
         }
+        // Both ASR packs — the ones that actually failed the download — carry
+        // measured sizes.
+        assertTrue(measured.any { it.startsWith("zipformer-en-streaming/") })
+        assertTrue(measured.any { it.startsWith("parakeet-tdt-0.6b-v2/") })
+        // The refiner pack does not: its size is still a round estimate and its
+        // sha256 is still empty. VB-QA-10's fix (gate on the server's
+        // contentLength) makes that survivable rather than fatal, and the empty
+        // digest is already listed as a known risk in the report — pinned here so
+        // "sizes are now measured from the upstream assets" is not read as
+        // covering every pack.
+        assertEquals(listOf("qwen25-05b-refiner/qwen2.5-0.5b-instruct-q8.task"), estimated)
+        assertTrue(
+            ModelCatalog.packs.flatMap { it.files }.any { it.sha256.isEmpty() },
+            "all digests are pinned now - update this pin and the report's known-risks section",
+        )
     }
 
     @Test

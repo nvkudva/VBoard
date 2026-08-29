@@ -16,10 +16,11 @@ Companion documents:
 **Thirteen proposed items, zero external users.**
 
 This is a V2 roadmap written before V1 has met a single person outside the repo. At the
-time of writing: seven accessibility tests are red, the strip/toolbar unification is not
-built, the AI-fix toolbar is implemented but not mounted, and there is no telemetry —
-which means the metric product and design agreed to steer by **cannot be computed
-today**. Adopting a metric we cannot measure is how roadmaps become fiction.
+time of writing: the strip/toolbar unification is not built, the AI-fix toolbar is
+implemented but not mounted, the text core destroys 64% of Unicode
+([QA_REPORT.md §3.1](QA_REPORT.md)), and there is no telemetry — which means the metric
+product and design agreed to steer by **cannot be computed today**. Adopting a metric we
+cannot measure is how roadmaps become fiction.
 
 The plan therefore opens with a wave that contains no features.
 
@@ -59,7 +60,7 @@ No new features. Gates everything below.
 
 | # | Item | Owns | Size |
 |---|---|---|---|
-| W0.1 | Fix the 7 red Robolectric accessibility tests | `app/src/test/**/keyboard/**` | S |
+| W0.1 | **QA Package A — Unicode-safe text core** ([QA_REPORT.md §9](QA_REPORT.md)) | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` only) | M |
 | W0.2 | Strip/toolbar row unification + AI-fix mount + attribution UI + working-set transcript | `app/keyboard/SuggestionStripView.kt`, `ToolbarView.kt`, `app/ime/VBoardImeService.kt`, `app/correct/AiFixController.kt` | M–L |
 | W0.3 | **Draft rescue** | `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt` | M |
 | W0.4 | Instrumentation: send-ready rate, time-to-send-ready, opt-in telemetry, content-free crash reporting | `core/metrics/**` (new), `app/settings/**` | M |
