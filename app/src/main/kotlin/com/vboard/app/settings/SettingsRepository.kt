@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vboard.app.keyboard.ThemeMode
+import com.vboard.core.session.SilenceTimeout
 import com.vboard.core.suggest.AutocorrectMode
 import com.vboard.core.text.CleanupOptions
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +49,12 @@ data class SettingsSnapshot(
     val spokenCommands: Boolean = true,
     val rawTranscriptMode: Boolean = false,
     val llmRefineEnabled: Boolean = false,
+    /**
+     * How long the mic may stay open with nothing being said. See
+     * [SilenceTimeout]: the shipped default is 8s, not the 30s the code used to
+     * hard-code, which matched neither spec.
+     */
+    val silenceTimeout: SilenceTimeout = SilenceTimeout.DEFAULT,
 ) {
     fun cleanupOptions(): CleanupOptions =
         if (rawTranscriptMode) {
@@ -89,6 +96,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         val SPOKEN_COMMANDS = booleanPreferencesKey("spoken_commands")
         val RAW_MODE = booleanPreferencesKey("raw_transcript")
         val LLM_REFINE = booleanPreferencesKey("llm_refine")
+        val SILENCE_TIMEOUT = stringPreferencesKey("voice_silence_timeout")
     }
 
     val flow: Flow<SettingsSnapshot> = dataStore.data.map { prefs -> prefs.toSnapshot() }
@@ -117,6 +125,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         spokenCommands = this[Keys.SPOKEN_COMMANDS] ?: true,
         rawTranscriptMode = this[Keys.RAW_MODE] ?: false,
         llmRefineEnabled = this[Keys.LLM_REFINE] ?: false,
+        silenceTimeout = enumOrDefault(this[Keys.SILENCE_TIMEOUT], SilenceTimeout.DEFAULT),
     )
 
     private inline fun <reified T : Enum<T>> enumOrDefault(raw: String?, default: T): T =

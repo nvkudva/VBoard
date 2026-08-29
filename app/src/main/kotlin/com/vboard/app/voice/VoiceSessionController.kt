@@ -26,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -516,9 +517,6 @@ class VoiceSessionController(
                 try {
                     withTimeoutOrNull(FINALIZE_WATCHDOG_MS) {
                         withContext(decodeDispatcher) {
-                            // Null when the optional accuracy pack is not
-                            // installed: dictation degrades to the streaming
-                            // transcript rather than failing.
                             runCatching { VoiceEngines.finalPass?.transcribe(samples) }
                                 .onFailure { Log.e(TAG, "final ASR pass failed", it) }
                                 .getOrNull()
@@ -530,8 +528,7 @@ class VoiceSessionController(
             }
             // A blank final result is not a valid transcription of speech the user
             // watched the partial spell out: falling through with "" deleted the
-            // sentence silently. Blank counts as failure, same as a timeout, same
-            // as no final-pass model at all.
+            // sentence silently. Blank counts as failure, same as a timeout.
             val finalText = FinalTranscriptPolicy.choose(decoded, partial)
 
             val cleaned = cleanTranscript(finalText)
@@ -558,49 +555,29 @@ class VoiceSessionController(
     }
 
     /**
-     * Rules cleanup for one utterance, entirely off the main thread.
+     * Rules cleanup for one utterance, with the expensive half off the main
+     * thread.
      *
-     * Both halves used to run on the main dispatcher, at the exact frame the
-     * commit animation had to draw: the tokenizer pipeline itself, and — worse —
-     * [Host.precedingText], which is a synchronous binder round-trip into the
-     * target app's process. A slow or busy host (a WebView, a Flutter view, a
-     * hung bridge) therefore froze the keyboard. Now the binder read happens on
-     * an IO thread under a hard budget, and the cleanup runs on Default.
+     * The 500-line tokenizer pipeline used to run on the main dispatcher at the
+     * exact frame the commit animation had to draw. It is pure computation over
+     * a string, so it moves to Default with no threading questions attached.
+     *
+     * [Host.precedingText] deliberately stays on the main thread. It is an IPC
+     * into the host app, but a bounded one (a fixed, small character count), and
+     * every InputConnection call site in this keyboard — like AOSP LatinIME — is
+     * main-thread. Cross-thread InputConnection use is not a documented
+     * guarantee, and trading a ~1ms bounded IPC for an untestable threading
+     * change is the wrong side of that bargain.
      */
     private suspend fun cleanTranscript(raw: String): CleanupResult {
-        val preceding = precedingTextBounded()
         val request = CleanupRequest(
             transcript = raw,
-            precedingText = preceding,
+            precedingText = host.precedingText(),
             fieldKind = fieldKind,
             options = settings.cleanupOptions(),
             ensureTerminalPunctuation = settings.autoPunctuate && fieldKind == FieldKind.TEXT,
         )
         return withContext(Dispatchers.Default) { app.cleaner.clean(request) }
-    }
-
-    /**
-     * The text before the cursor, or "" if the host does not answer in time.
-     *
-     * Honest limitation, the same one [FINALIZE_WATCHDOG_MS] has: a binder call
-     * has no suspension point, so the timeout cannot abandon the call itself —
-     * it abandons *waiting* for it, on a pooled IO thread, leaving dictation
-     * free to continue. Preceding text only feeds capitalization and spacing
-     * decisions, so cleaning without it is a slightly worse join, not a wrong
-     * transcript; a wedged host stalling every commit is far worse.
-     */
-    private suspend fun precedingTextBounded(): String {
-        val text = withTimeoutOrNull(PRECEDING_TEXT_TIMEOUT_MS) {
-            withContext(Dispatchers.IO) {
-                runCatching { host.precedingText() }
-                    .onFailure { Log.w(TAG, "preceding-text read failed", it) }
-                    .getOrDefault("")
-            }
-        }
-        if (text == null) {
-            Log.w(TAG, "host did not return preceding text in ${PRECEDING_TEXT_TIMEOUT_MS}ms")
-        }
-        return text ?: ""
     }
 
     // ------------------------------------------------------------ refinement
@@ -656,6 +633,18 @@ class VoiceSessionController(
                 if (effect.refine) refineAsync(effect.text, effect.utteranceIndex)
             }
             Effect.DeleteLastUtterance -> host.deleteLastUtterance()
+            is Effect.NoteAudioOverrun -> {
+                // Counts only: never audio, never transcript text. This is the
+                // line that turns "the model is inaccurate" into a diagnosable
+                // defect (VB-106).
+                val ms = effect.droppedSamples * 1_000L / AudioCapture.SAMPLE_RATE
+                Log.w(
+                    TAG,
+                    "streaming decoder fell behind: dropped ${effect.droppedSamples} samples " +
+                        "(~${ms}ms), ${effect.sessionTotalSamples} this session; " +
+                        "the final pass is unaffected",
+                )
+            }
             is Effect.SignalError -> showError(effect.kind)
             is Effect.Haptic -> Unit // views already emit haptics on their own events
         }
@@ -684,7 +673,6 @@ class VoiceSessionController(
 
     companion object {
         private const val TAG = "VBoardVoice"
-        private const val SILENCE_TIMEOUT_MS = 30_000L
 
         /**
          * Budget for the final pass.
@@ -702,7 +690,12 @@ class VoiceSessionController(
 
         private const val AUDIO_STALL_TIMEOUT_MS = 2_000L
         private const val AUDIO_JOIN_TIMEOUT_MS = 1_500L
-        private const val WATCHDOG_TICK_MS = 500L
+
+        /** UI/overrun tick; matches the ~100ms capture cadence. */
+        private const val MONITOR_TICK_MS = 100L
+
+        /** Mic-health, call and silence checks run every 500ms. */
+        private const val WATCHDOG_EVERY_N_TICKS = 5
 
         /** Serializes AudioRecord construction and release; see [AudioCapture]. */
         private val audioDispatcher: CoroutineDispatcher =
@@ -712,6 +705,15 @@ class VoiceSessionController(
         /** One decode at a time, and never on a dispatcher the UI shares. */
         private val decodeDispatcher: CoroutineDispatcher =
             Executors.newSingleThreadExecutor { r -> Thread(r, "vboard-asr-decode") }
+                .asCoroutineDispatcher()
+
+        /**
+         * The streaming decoder's own thread. Separate from [decodeDispatcher]
+         * on purpose: serializing the live stream behind a multi-second final
+         * pass is precisely the stall that used to overrun the capture buffer.
+         */
+        private val streamDispatcher: CoroutineDispatcher =
+            Executors.newSingleThreadExecutor { r -> Thread(r, "vboard-asr-stream") }
                 .asCoroutineDispatcher()
     }
 }

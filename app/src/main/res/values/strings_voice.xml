@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Voice-session strings. Kept in their own file so the dictation work and the
+  keyboard/clipboard work do not collide in one resource file.
+-->
+<resources>
+    <!--
+      DESIGN_SPEC §V2 lists Off / 5s / 8s / 15s with 8s selected; PRODUCT_SPEC
+      VB-108 says 30s. The setting exists so the disagreement is the user's to
+      settle, and so a ruling is a one-line default change.
+    -->
+    <string name="settings_voice_timeout">Stop listening after silence</string>
+    <string name="settings_voice_timeout_subtitle">How long the microphone stays open when you stop speaking.</string>
+    <string name="settings_voice_timeout_off">Off</string>
+    <string name="settings_voice_timeout_5s">5 seconds</string>
+    <string name="settings_voice_timeout_8s">8 seconds</string>
+    <string name="settings_voice_timeout_15s">15 seconds</string>
+</resources>

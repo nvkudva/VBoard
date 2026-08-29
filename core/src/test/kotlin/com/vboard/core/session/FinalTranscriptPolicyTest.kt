@@ -8,10 +8,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The final pass (Parakeet TDT) is an optional ~480MB upgrade, so a user with
- * only the streaming recognizer installed must still get committed text. These
- * pin the rule that makes that true — and the one that stops a blank or failed
- * final pass from silently deleting a sentence the user watched appear.
+ * Pins the rule that stops a blank, failed or timed-out final pass from silently
+ * deleting a sentence the user watched the streaming partial spell out.
  */
 class FinalTranscriptPolicyTest {
 
@@ -24,7 +22,7 @@ class FinalTranscriptPolicyTest {
     }
 
     @Test
-    fun `no final pass installed commits the streaming partial`() {
+    fun `a final pass that produced nothing commits the streaming partial`() {
         assertEquals(
             "meet me at 8",
             FinalTranscriptPolicy.choose(null, "meet me at 8"),
@@ -43,24 +41,25 @@ class FinalTranscriptPolicyTest {
     }
 
     @Test
-    fun `a streaming-only install still commits a full utterance`() {
+    fun `a timed-out final pass still commits a full utterance`() {
         // End-to-end at the state-machine level: partial -> endpoint -> the
-        // streaming text as the final transcript -> a real commit.
+        // streaming text standing in for a final pass that never answered ->
+        // a real commit, not a swallowed sentence.
         val machine = DictationStateMachine()
         machine.onEvent(Event.MicPressed)
         machine.onEvent(Event.ModelsReady)
-        machine.onEvent(Event.Partial("no accuracy pack here"))
+        machine.onEvent(Event.Partial("the final pass timed out"))
         machine.onEvent(Event.EndpointDetected)
 
         val chosen = FinalTranscriptPolicy.choose(
-            finalPassText = null, // no Parakeet installed
-            streamingPartial = "no accuracy pack here",
+            finalPassText = null,
+            streamingPartial = "the final pass timed out",
         )
         val effects = machine.onEvent(Event.FinalTranscript(chosen))
 
         assertTrue(
-            Effect.CommitUtterance("no accuracy pack here", 0, refine = false) in effects,
-            "a streaming-only install must still commit: $effects",
+            Effect.CommitUtterance("the final pass timed out", 0, refine = false) in effects,
+            "a failed final pass must still commit the partial: $effects",
         )
         assertEquals(State.Listening("", 1), machine.state)
     }
