@@ -234,12 +234,17 @@ looked healthy.
 - Size and 416 handling is verified against fakes; the live GitHub-release behaviour it models (200/206/416, `Content-Range` totals) was confirmed by hand and should be re-checked if the download host changes.
 - MediaPipe LLM Inference is in maintenance mode upstream; migration to LiteRT-LM is a v2 consideration.
 
-## 9. Standing work packages
+## 9. Work packages
 
-*Nothing here is dispatched.* This section is written to be read cold, weeks from
-now, by someone who was not present. Each package is a coherent body of work; the
-three have no file overlap, so they stay safe to run concurrently if that ever
-happens.
+Scheduled as **Wave 1.5** in [V2_PLAN.md §3](V2_PLAN.md) — A as W1.5.1, B as
+W1.5.2, C as W1.5.3. *Nothing is dispatched yet.* This section is written to be
+read cold, weeks from now, by someone who was not present: it carries the file
+ownership, constraints and definitions of done that the plan's table does not.
+
+The three packages have no file overlap, so B and C are safe to run
+concurrently. **A lands first** — it shrinks both of the others. The plan also
+records an open ordering question between A and V2's W1.2, which owns the same
+`Tokens.kt`; see Wave 1.5 there.
 
 ### Package A — Unicode-safe text core
 

@@ -60,23 +60,23 @@ No new features. Gates everything below.
 
 | # | Item | Owns | Size |
 |---|---|---|---|
-| W0.1 | **QA Package A — Unicode-safe text core** ([QA_REPORT.md §9](QA_REPORT.md)) | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` only) | M |
-| W0.2 | Strip/toolbar row unification + AI-fix mount + attribution UI + working-set transcript | `app/keyboard/SuggestionStripView.kt`, `ToolbarView.kt`, `app/ime/VBoardImeService.kt`, `app/correct/AiFixController.kt` | M–L |
-| W0.3 | **Draft rescue** | `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt` | M |
-| W0.4 | Instrumentation: send-ready rate, time-to-send-ready, opt-in telemetry, content-free crash reporting | `core/metrics/**` (new), `app/settings/**` | M |
-| W0.5 | Performance and size gates measured; assign a standing owner to `core/text/` | `app/build.gradle.kts`, `docs/PERFORMANCE_REVIEW.md`, `core/text/**` | M |
+| W0.1 | Strip/toolbar row unification + AI-fix mount + attribution UI + working-set transcript | `app/keyboard/SuggestionStripView.kt`, `ToolbarView.kt`, `app/ime/VBoardImeService.kt`, `app/correct/AiFixController.kt` | M–L |
+| W0.2 | **Draft rescue** | `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt` | M |
+| W0.3 | Instrumentation: send-ready rate, time-to-send-ready, opt-in telemetry, content-free crash reporting | `core/metrics/**` (new), `app/settings/**` | M |
+| W0.4 | Performance and size gates measured; assign a standing owner to `core/text/` | `app/build.gradle.kts`, `docs/PERFORMANCE_REVIEW.md`, `core/text/**` | M |
 
-**W0.3 is the plan's most important reordering.** Draft rescue was ranked sixth on the
+**W0.2 is the plan's most important reordering.** Draft rescue was ranked sixth on the
 feature list. It is not a feature — it is a data-loss bug whose existence is already
 recorded as a `TODO` in `finishSession()` saying that an input connection which dies
 before the final pass returns loses the user's speech. It belongs in the bug queue, above
 every V2 item.
 
-**W0.4 is the precondition for the metric ruling in §4 being real rather than
+**W0.3 is the precondition for the metric ruling in §4 being real rather than
 aspirational.**
 
-Concurrency: W0.1 ∥ W0.4 ∥ W0.5 can run together. W0.2 and W0.3 both want
-`VBoardImeService.kt` and are strictly sequential — **W0.3 first**, because it is the bug.
+Concurrency: W0.3 ∥ W0.4 can run together, and both are disjoint from Wave 1.5's `core`
+work. W0.1 and W0.2 both want `VBoardImeService.kt` and are strictly sequential —
+**W0.2 first**, because it is the bug.
 
 ### Wave 1 — Confidence foundation
 
@@ -86,7 +86,8 @@ Concurrency: W0.1 ∥ W0.4 ∥ W0.5 can run together. W0.2 and W0.3 both want
 | W1.2 | Spoken-format intelligence (times, money, dates, spoken email addresses) | `core/format/**` (new), `core/text/Tokens.kt` | M |
 
 One owner, sequential — W1.2 consumes W1.1's normalizer. Pure `core`, no Android, no file
-contention with Wave 0 except `core/text/`.
+contention with Wave 0. W1.2 *does* contend with Wave 1.5 over `core/text/Tokens.kt` —
+that is decision 2 in §6.
 
 **Gate on W1.1: measured disagreement precision against a hand-labeled corpus of ≥200
 utterances, published as a number either way.** Below roughly 70%, W1.2 proceeds and
@@ -101,6 +102,54 @@ would fight the safety mechanism that exists to protect it. Every conversion mus
 emit a `MECHANICAL` edit so it is attributable and revertible; spoken numbers have already
 destroyed user text once in this codebase (VB-QA-01, phone numbers collapsed by repetition
 handling).
+
+### Wave 1.5 — Text-core correctness (the QA findings)
+
+Everything in [QA_REPORT.md](QA_REPORT.md) §3, packaged. These are **defects, not
+features** — no user asked for them and no user will thank us for them, but four of them
+lose the user's words outright and two cross a privacy boundary we stated publicly.
+
+| # | Item | Closes | Owns | Size |
+|---|---|---|---|---|
+| W1.5.1 | **Package A — Unicode-safe text core** | VB-QA-12, -13, -14, -15, -16, -17, -21 | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` + its call site only), `Cleanup.kt` | M |
+| W1.5.2 | **Package B — Destructive-stage confidence + field-kind honesty** | VB-QA-18, -19, -20, -29, gap G3 | `core/text/TranscriptCleaner.kt` (stages 2/3/5, `sentenceStartsAt`, `capitalize`), `FieldKind.kt`, `Cleanup.kt` | M |
+| W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** | VB-QA-22, -23, -24, -25, -26, -28, -32 | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt` | M |
+
+**28 `@Disabled` tests are already written and waiting.** Each names the `VB-QA-NN` it is
+blocked on; each package's definition of done is "these specific tests pass with the
+annotation removed, and the invariant suites stay green". That last clause is the real
+gate — `CleanupInvariantQaTest` and the clipboard retention fuzz exist to catch a fix that
+overshoots, and a package that closes its own tests while breaking theirs is not done.
+Nobody has to re-derive the requirements; the spec is executable.
+
+Sequencing inside the wave: **A first, then B and C in any order or concurrently.** A is
+not merely largest, it *shrinks the other two* — VB-QA-33 and VB-QA-34 exist only because
+`ContentGuard` is compensating for `Tokenizer`, and gap G2 becomes much smaller once the
+tokenizer stops destroying content. Full file ownership, the constraints each fixer must
+not violate, and per-package definitions of done are in [QA_REPORT.md §9](QA_REPORT.md).
+
+**One hazard created by placing this after Wave 1, and it needs a decision.** W1.2
+(spoken-format intelligence) lists `core/text/Tokens.kt` among the files it owns — the same
+file Package A rewrites. Building `4:30pm` and `$25` handling on top of a tokenizer that
+deletes `:` and `$` means writing the feature against behaviour that is about to change
+underneath it, then reworking it. Two ways out, and the choice is yours:
+
+- **Pull W1.5.1 forward to sit beside W1.1** (they are disjoint — W1.1 owns
+  `core/confidence/**` and `FinalTranscriptPolicy.kt`, A owns `Tokens.kt`), leaving W1.2
+  and the rest of Wave 1.5 where they are. This is the cheaper order and the one this plan
+  recommends.
+- **Keep the wave whole and move W1.2 after it**, accepting that spoken-format slips by
+  roughly one package.
+
+What does *not* work is running W1.2 and W1.5.1 concurrently: one file, two owners, and
+this project has already lost an agent's work to exactly that collision.
+
+**Two of these are not schedulable as ordinary polish.** VB-QA-24 writes a one-time code
+or card number to disk when it arrives in non-ASCII digits — `SESSION_ONLY` is the privacy
+boundary and this crosses it. VB-QA-29 capitalizes inside `PASSWORD` fields, which the
+spec says must be left untouched entirely. Both are in Wave 1.5 because that is where
+their packages live, but if beta ships before this wave lands, they are the two that
+should be lifted out and fixed first.
 
 ### Wave 2 — Interaction
 
@@ -164,7 +213,7 @@ proper nouns — and only then reconsider.
 non-negotiable — any delta reflows the host app twice per dictation. Design conceded the
 tall transcript. Once committed text lives in the field, the only thing left to display is
 the in-flight partial plus controls, and that belongs in the unified row, not a separate
-bar. Handed to W0.2 as an input.
+bar. Handed to W0.1 as an input.
 
 **D5 — Is word error rate a roadmap input?**
 *Ruling: disqualified as a prioritisation input; retained as a regression signal.* The
@@ -197,12 +246,18 @@ Four of thirteen cut. Two-thirds of the remainder sits behind a gate rather than
 ## 6. Two decisions needed
 
 **1. Does V2 start before or after beta?**
-Recommendation: Wave 0 now, Wave 1 concurrent with beta, Waves 2–3 after first user data.
-Wave 1 is pure `core` with no user-facing surface, so it is the one thing safe to build
-without evidence. Everything past it is a guess until someone outside the team has used
-the keyboard.
+Recommendation: Wave 0 now, Waves 1 and 1.5 concurrent with beta, Waves 2–3 after first
+user data. Both are pure `core` with no user-facing surface, so they are the one thing safe
+to build without evidence — and Wave 1.5 is not really a V2 question at all, since it is
+fixing V1. Everything past them is a guess until someone outside the team has used the
+keyboard.
 
-**2. Do we accept that the confidence idea's value is unproven until measured?**
+**2. Does Package A (W1.5.1) move up beside W1.1, or does W1.2 move down behind Wave 1.5?**
+Recommendation: pull Package A forward. Both orders are defensible; what is not defensible
+is leaving `core/text/Tokens.kt` owned by two waves at once. See Wave 1.5 for the full
+argument.
+
+**3. Do we accept that the confidence idea's value is unproven until measured?**
 Two independent reviewers converging is evidence about an idea's *appeal*, not its
 *precision*. The W1.1 gate makes that testable for the first time. Committing Wave 3 to a
 date now would mean committing to a date for features whose input signal has not been
