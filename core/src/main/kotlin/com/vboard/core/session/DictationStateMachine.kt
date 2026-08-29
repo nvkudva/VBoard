@@ -38,11 +38,17 @@ class DictationStateMachine(private val config: Config = Config()) {
          * @property stopAfterCommit the user asked to stop while the final pass
          *   was still running. The session must not end until that commit lands,
          *   or the sentence they just watched being transcribed is discarded.
+         * @property endWithError something outside the app took the microphone
+         *   (an incoming call, another app grabbing audio focus). Same deferral
+         *   as [stopAfterCommit] — the buffered speech is still transcribed and
+         *   committed — but the session ends in this error rather than silently,
+         *   so the user is told why the mic stopped (VB-123).
          */
         data class Finalizing(
             val partial: String,
             val utteranceIndex: Int,
             val stopAfterCommit: Boolean = false,
+            val endWithError: ErrorKind? = null,
         ) : State
 
         data class Error(val kind: ErrorKind) : State
@@ -79,6 +85,22 @@ class DictationStateMachine(private val config: Config = Config()) {
         data object StopRequested : Event
         data object SilenceTimeout : Event
         data object ErrorDismissed : Event
+
+        /**
+         * The microphone was taken away mid-session: audio focus lost, or the
+         * telephony stack went off-hook. Distinct from [AudioError] because the
+         * buffered speech is still good — the machine finalizes it and only then
+         * reports the interruption (VB-123).
+         */
+        data object AudioFocusLost : Event
+
+        /**
+         * The capture-to-decode queue overflowed: [droppedSamples] never reached
+         * the streaming recognizer. Purely observational — the final pass still
+         * has those samples — but it must not be invisible, because the way this
+         * failure presents to a user is "the model is inaccurate" (VB-106).
+         */
+        data class AudioOverrun(val droppedSamples: Int) : Event
     }
 
     sealed interface Effect {
@@ -101,11 +123,26 @@ class DictationStateMachine(private val config: Config = Config()) {
         data object DeleteLastUtterance : Effect
         data class SignalError(val kind: ErrorKind) : Effect
         data class Haptic(val kind: HapticKind) : Effect
+
+        /**
+         * Audio was dropped before it reached the streaming recognizer. The app
+         * layer logs it (counts only — never audio, never transcript text); it
+         * exists as an effect so the loss is observable in a bug report instead
+         * of being a silent driver overrun.
+         */
+        data class NoteAudioOverrun(
+            val droppedSamples: Int,
+            val sessionTotalSamples: Long,
+        ) : Effect
     }
 
     enum class HapticKind { SESSION_START, UTTERANCE_COMMIT, SESSION_END, ERROR }
 
     var state: State = State.Idle
+        private set
+
+    /** Samples lost before reaching the streaming recognizer this session. */
+    var droppedSamplesThisSession: Long = 0L
         private set
 
     fun onEvent(event: Event): List<Effect> {
@@ -116,14 +153,18 @@ class DictationStateMachine(private val config: Config = Config()) {
 
     fun reset() {
         state = State.Idle
+        droppedSamplesThisSession = 0L
     }
 
     private fun reduce(state: State, event: Event): Pair<State, List<Effect>> = when (state) {
         is State.Idle -> when (event) {
-            Event.MicPressed -> State.PreparingModels to listOf(
-                Effect.ShowVoiceBar,
-                Effect.Haptic(HapticKind.SESSION_START),
-            )
+            Event.MicPressed -> {
+                droppedSamplesThisSession = 0L
+                State.PreparingModels to listOf(
+                    Effect.ShowVoiceBar,
+                    Effect.Haptic(HapticKind.SESSION_START),
+                )
+            }
             else -> state to emptyList()
         }
 
@@ -133,6 +174,8 @@ class DictationStateMachine(private val config: Config = Config()) {
             Event.ModelsUnusable -> errorState(ErrorKind.MODEL_CORRUPT)
             Event.PermissionDenied -> errorState(ErrorKind.MIC_PERMISSION_DENIED)
             Event.AudioError -> errorState(ErrorKind.AUDIO_UNAVAILABLE)
+            // Nothing is buffered yet, so there is nothing to rescue: report it.
+            Event.AudioFocusLost -> errorState(ErrorKind.AUDIO_UNAVAILABLE)
             Event.StopRequested, Event.MicPressed -> stopEffects(started = false)
             else -> state to emptyList()
         }
@@ -158,6 +201,28 @@ class DictationStateMachine(private val config: Config = Config()) {
             Event.StopRequested, Event.MicPressed -> stopEffects(started = true)
             Event.SilenceTimeout -> stopEffects(started = true)
             Event.AudioError -> errorState(ErrorKind.AUDIO_UNAVAILABLE, stopAudio = true)
+            // VB-123. The mic is gone either way, but what has already been said
+            // is not: cut capture, then transcribe the buffered utterance and
+            // commit it before the error is shown. Discarding it here is the
+            // whole defect — an incoming call must not eat the user's sentence.
+            // StopAudio is emitted first on purpose: the app layer takes the
+            // *entire* buffer for a finalize that follows a stopped mic, rather
+            // than only the part the decoder had caught up with.
+            Event.AudioFocusLost ->
+                if (state.partial.isBlank()) {
+                    errorState(ErrorKind.AUDIO_UNAVAILABLE, stopAudio = true)
+                } else {
+                    State.Finalizing(
+                        partial = state.partial,
+                        utteranceIndex = state.utteranceIndex,
+                        stopAfterCommit = true,
+                        endWithError = ErrorKind.AUDIO_UNAVAILABLE,
+                    ) to listOf(
+                        Effect.StopAudio,
+                        Effect.BeginFinalize(state.partial, state.utteranceIndex),
+                    )
+                }
+            is Event.AudioOverrun -> state to noteOverrun(event.droppedSamples)
             // The mic is already hot when the engines turn out to be gone (a pack
             // deleted mid-session). Without this the machine sat in Listening with
             // the halo up, no reader loop and no way out.
@@ -168,7 +233,12 @@ class DictationStateMachine(private val config: Config = Config()) {
 
         is State.Finalizing -> when (event) {
             is Event.FinalTranscript ->
-                commitThen(event.text, state.utteranceIndex, stop = state.stopAfterCommit)
+                commitThen(
+                    text = event.text,
+                    index = state.utteranceIndex,
+                    stop = state.stopAfterCommit,
+                    endWithError = state.endWithError,
+                )
             is Event.Partial ->
                 // Next utterance already started while the previous finalizes.
                 state to listOf(Effect.UpdatePartial(event.text))

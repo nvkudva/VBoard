@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Accessibility copy that DESIGN_SPEC §10 needs but strings.xml does not already
+  carry. The nine `a11y_*` strings already in strings.xml (mic, backspace, enter,
+  shift, symbols, letters, emoji, space, voice orb) are the intended wording and
+  are referenced, not duplicated, from here.
+
+  Action labels are the verb TalkBack reads after "double-tap to", so they are
+  lowercase and verb-first ("speak", not "Speak now").
+-->
+<resources>
+
+    <!-- Key states the base labels do not cover. -->
+    <string name="a11y_shift_on">Shift on</string>
+    <string name="a11y_caps_lock_on">Caps lock on</string>
+
+    <!-- Enter renders as the editor's action; announce that action, not "Enter". -->
+    <string name="a11y_enter_search">Search</string>
+    <string name="a11y_enter_send">Send</string>
+
+    <string name="a11y_symbols_more">More symbols</string>
+    <string name="a11y_clipboard">Clipboard</string>
+    <string name="a11y_switch_keyboard">Switch keyboard</string>
+
+    <!-- Action labels (spoken as "double-tap to <label>"). -->
+    <string name="a11y_action_speak">speak</string>
+    <string name="a11y_action_alternates">show alternate characters</string>
+    <string name="a11y_action_open_clipboard">open the clipboard</string>
+    <string name="a11y_action_switch_keyboard">switch keyboard</string>
+    <string name="a11y_action_paste">paste</string>
+    <string name="a11y_action_clip_options">show clip options</string>
+
+    <!-- Long-press alternates popup. -->
+    <string name="a11y_alternate">Alternate %1$s</string>
+
+    <!-- Suggestion strip. -->
+    <string name="a11y_suggestion">%1$s, suggestion</string>
+    <string name="a11y_suggestion_autocorrect">%1$s, autocorrect</string>
+    <string name="a11y_clipboard_chip">Paste %1$s</string>
+
+    <!-- Clipboard panel. Spoken to the person the clip belongs to; never logged. -->
+    <string name="a11y_clip">Clip, %1$s</string>
+    <string name="a11y_clip_pinned">Pinned clip, %1$s</string>
+    <string name="a11y_clipboard_empty">Clipboard is empty</string>
+
+    <!-- Emoji panel. Cell names come from Unicode; only the tabs need copy. -->
+    <string name="a11y_emoji_category">%1$s emoji</string>
+    <string name="a11y_emoji_cat_smileys">Smileys and emotion</string>
+    <string name="a11y_emoji_cat_people">People and body</string>
+    <string name="a11y_emoji_cat_nature">Animals and nature</string>
+    <string name="a11y_emoji_cat_food">Food and drink</string>
+    <string name="a11y_emoji_cat_activity">Activities</string>
+    <string name="a11y_emoji_cat_symbols">Symbols and hearts</string>
+
+</resources>

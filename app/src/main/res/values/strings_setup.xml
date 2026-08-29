@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copy for the first-run setup funnel.
+
+  Every size in here arrives as a format argument computed from ModelCatalog
+  (see com.vboard.core.model.ByteSize / DownloadSizes). Do not write a byte
+  figure into this file: the previous prose said "about 1 GB" and "about 1.4 GB"
+  for a download that was really 610 MB, which overstated the scariest number on
+  the screen by 65% at exactly the moment users decide whether to bail.
+-->
+<resources>
+
+    <!-- Models step -->
+    <string name="setup_models_title">Add voice typing</string>
+    <string name="setup_models_body">The keyboard already works — you can type right now. Voice typing needs a one-time %1$s download, and then it runs entirely offline.</string>
+    <string name="setup_models_wifi_hint">Downloads wait for Wi-Fi by default. Adding every optional model comes to %1$s.</string>
+    <string name="setup_models_mobile_hint">You\'re on mobile data. Downloads wait for Wi-Fi unless you choose otherwise.</string>
+    <string name="setup_models_offline_hint">You\'re offline. Anything you start now will begin when you\'re back on Wi-Fi.</string>
+
+    <string name="setup_finish">Finish setup</string>
+    <string name="setup_skip_downloads">Skip for now — I\'ll just type</string>
+    <string name="setup_skip_note">You can add voice typing any time from VBoard settings, or by tapping the mic key.</string>
+
+    <!-- Pack rows -->
+    <string name="setup_pack_download_sized">Download · %1$s</string>
+    <string name="setup_pack_optional">Optional upgrade · %1$s</string>
+    <string name="setup_pack_required">Needed for voice typing · %1$s</string>
+    <string name="setup_pack_waiting_wifi">Waiting for Wi-Fi</string>
+    <string name="setup_pack_queued">Queued</string>
+
+    <!-- Optional-upgrade explanations -->
+    <string name="setup_upgrade_accuracy">Sharpens each finished sentence. Voice typing works without it.</string>
+    <string name="setup_upgrade_refiner">Tidies punctuation and filler words after you speak. Entirely optional.</string>
+
+    <!-- Metered-connection confirmation -->
+    <string name="setup_metered_title">Use mobile data?</string>
+    <string name="setup_metered_body">You\'re not on Wi-Fi. Downloading %1$s will use %2$s of your mobile data.</string>
+    <string name="setup_metered_confirm">Use mobile data</string>
+    <string name="setup_metered_wait">Wait for Wi-Fi</string>
+
+    <!-- Done step -->
+    <string name="setup_done_title_voice">You\'re all set.</string>
+    <string name="setup_done_title_typing">Ready to type.</string>
+    <string name="setup_done_body_voice">Tap the mic key any time to start talking. VBoard cleans up your words as you speak — all on-device.</string>
+    <string name="setup_done_body_typing">VBoard is your keyboard. Voice typing needs a %1$s download — tap the mic key or open settings whenever you want it.</string>
+
+    <!-- Download notifications -->
+    <string name="setup_notify_voice_ready">Voice typing is ready</string>
+    <string name="setup_notify_pack_ready">%1$s is ready</string>
+    <string name="setup_notify_pack_failed">%1$s couldn\'t be downloaded</string>
+</resources>

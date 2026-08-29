@@ -106,7 +106,11 @@ class ModelDownloadWorker(
 
         if (result != PackState.Installed) {
             val error = (result as? PackState.Failed)?.error
-            ModelDownloadService.publish(packId, result)
+            // A cancel is either the user's (ModelDownloadService.cancel already reset the
+            // row) or WorkManager replacing this run with a fresh one for the same pack.
+            // Publishing "cancelled" in the second case would overwrite the new worker's
+            // progress with an error the user never caused.
+            if (error != InstallError.CANCELLED) ModelDownloadService.publish(packId, result)
             // A network blip is WorkManager's problem, not the user's: reschedule with
             // backoff and keep the .part files. Everything else needs a human (no storage,
             // a corrupt payload, an explicit cancel), so surface it and stop.

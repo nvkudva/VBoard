@@ -9,9 +9,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import com.vboard.core.model.DownloadDecision
-import com.vboard.core.model.DownloadPolicy
-import com.vboard.core.model.ModelCatalog
 import com.vboard.core.model.NetworkState
 import com.vboard.core.model.PackState
 import kotlinx.coroutines.flow.Flow
@@ -62,26 +59,13 @@ object ModelDownloadService {
     }
 
     /**
-     * Decides what to do about a download given the current connection.
+     * Requests a download the user has explicitly agreed to pay mobile data for.
      *
-     * Returns [DownloadDecision.ConfirmMetered] when the caller must obtain an explicit
-     * second confirmation first; nothing is enqueued in that case.
+     * Only ever called behind a confirmation that states the real size — see
+     * [com.vboard.core.model.DownloadPolicy], which decides when that confirmation is owed.
      */
-    fun request(
-        context: Context,
-        packId: String,
-        meteredConsent: Boolean = false,
-    ): DownloadDecision {
-        val bytes = ModelCatalog.byId(packId)?.totalBytes ?: 0L
-        val decision = DownloadPolicy.decide(
-            network = Connectivity.current(context),
-            meteredConsent = meteredConsent,
-            bytes = bytes,
-        )
-        if (decision is DownloadDecision.Enqueue) {
-            enqueue(context, packId, allowMetered = decision.allowMetered)
-        }
-        return decision
+    fun startAllowingMetered(context: Context, packId: String) {
+        enqueue(context, packId, allowMetered = true)
     }
 
     private fun enqueue(context: Context, packId: String, allowMetered: Boolean) {

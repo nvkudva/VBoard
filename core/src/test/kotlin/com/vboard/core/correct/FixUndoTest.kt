@@ -96,6 +96,25 @@ class FixUndoTest {
     }
 
     @Test
+    fun `reapply keeps the original and the deadline after a per-change revert`() {
+        val store = FixUndoStore(windowMs = 15_000)
+        store.record("i went too the stor", 0, 0, "I went to the store.", fieldA, nowMs = 1_000)
+        assertTrue(store.reapply("I went to the stor.", nowMs = 5_000, fieldToken = fieldA))
+
+        val snapshot = store.peek(6_000, fieldA)!!
+        assertEquals("i went too the stor", snapshot.originalText())
+        assertTrue(snapshot.matchesField("I went to the stor."))
+        assertFalse(snapshot.matchesField("I went to the store."))
+        // The 15s clock still runs from the fix, not from the revert.
+        assertEquals(16_000, snapshot.expiresAtMs)
+    }
+
+    @Test
+    fun `reapply does nothing when no undo is armed`() {
+        assertFalse(store().reapply("anything", nowMs = 0, fieldToken = fieldA))
+    }
+
+    @Test
     fun `a second fix replaces the outstanding undo`() {
         val store = store()
         store.record("first", 0, 0, "First.", fieldA, nowMs = 0)

@@ -34,10 +34,15 @@
                 android:resource="@xml/method" />
         </service>
 
+        <!-- Model downloads run as a WorkManager long-running worker (see
+             ModelDownloadWorker), which hosts its foreground notification in WorkManager's
+             own service. That service ships without a foregroundServiceType, and targetSdk
+             34+ refuses to start an untyped foreground service, so the type is merged in
+             here. -->
         <service
-            android:name=".models.ModelDownloadService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <activity
             android:name=".onboarding.OnboardingActivity"

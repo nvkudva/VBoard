@@ -12,6 +12,10 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeProvider
+import android.view.inputmethod.InputMethodManager
+import com.vboard.app.R
 import com.vboard.core.keyboard.KeyboardHeights
 
 /**
@@ -43,6 +47,10 @@ class KeyboardView(
         set(value) {
             field = value
             keyBounds = emptyList()
+            // The whole virtual node tree just changed under any screen reader
+            // holding focus in it.
+            a11y.reset()
+            a11y.notifyContentChanged()
             requestLayout()
             invalidate()
         }
@@ -51,6 +59,9 @@ class KeyboardView(
         set(value) {
             if (field != value) {
                 field = value
+                // Letter descriptions and the shift key's own description both
+                // change with this.
+                a11y.notifyContentChanged()
                 invalidate()
             }
         }
@@ -59,6 +70,7 @@ class KeyboardView(
         set(value) {
             if (field != value) {
                 field = value
+                a11y.notifyContentChanged()
                 invalidate()
             }
         }

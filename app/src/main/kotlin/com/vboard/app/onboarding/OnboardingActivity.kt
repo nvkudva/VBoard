@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.vboard.app.VBoardApp
 import com.vboard.app.models.ModelDownloadService
@@ -20,13 +21,18 @@ import com.vboard.app.settings.SettingsActivity
 import com.vboard.app.ui.VBoardM3Theme
 import com.vboard.app.ui.resolveDark
 import com.vboard.core.model.ModelCatalog
-import com.vboard.core.model.PackState
+import com.vboard.core.model.ModelReadiness
+import com.vboard.core.model.NetworkState
 
 /**
  * Linear first-run setup: welcome → enable IME → select IME → mic permission →
  * model downloads → done. Jumps to the first incomplete step on launch, and
  * re-checks system state whenever the window regains focus (the IME settings
  * screen and picker dialog both hand focus back on completion).
+ *
+ * The download step is never a gate. Setup can be finished with nothing downloaded — the
+ * keyboard types either way — and [SetupState] remembers that so a user who chose to skip is
+ * not dropped back onto the download screen by every subsequent launch.
  */
 class OnboardingActivity : ComponentActivity() {
 
@@ -38,18 +44,39 @@ class OnboardingActivity : ComponentActivity() {
         fun modelsIntent(context: Context): Intent =
             Intent(context, OnboardingActivity::class.java)
                 .putExtra(EXTRA_TARGET_STEP, TARGET_STEP_MODELS)
+
+        /**
+         * Intent for offering the voice-model download off the back of something the user did
+         * for another reason — a mic tap with no models installed.
+         *
+         * Returns null when the offer has already been made in this process: PRODUCT_SPEC
+         * VB-408 says the app never nags more than once per session, and a user who has
+         * already declined once is telling us they are happy typing.
+         */
+        fun modelPromptIntentOrNull(context: Context): Intent? =
+            if (SetupState.claimPromptSlot()) {
+                modelsIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else {
+                null
+            }
     }
 
     private var currentStep by mutableStateOf(OnboardingStep.WELCOME)
     private var imeEnabled by mutableStateOf(false)
     private var imeSelected by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
+    private var networkState by mutableStateOf(NetworkState.OFFLINE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as VBoardApp
         refreshSystemState()
-        currentStep = if (intent?.getStringExtra(EXTRA_TARGET_STEP) == TARGET_STEP_MODELS) {
+        val deepLinkedToModels = intent?.getStringExtra(EXTRA_TARGET_STEP) == TARGET_STEP_MODELS
+        currentStep = if (deepLinkedToModels) {
+            // Arriving here from settings or a mic tap: this *is* the offer, so it counts as
+            // the session's one prompt even if the caller did not go through
+            // modelPromptIntentOrNull.
+            SetupState.claimPromptSlot()
             OnboardingStep.MODELS
         } else {
             firstIncompleteStep(app)
@@ -57,6 +84,8 @@ class OnboardingActivity : ComponentActivity() {
         setContent {
             val snapshot by app.settings.snapshot.collectAsState()
             val serviceStates by ModelDownloadService.states.collectAsState()
+            val scheduledFlow = remember { ModelDownloadService.observeScheduledWork(this) }
+            val scheduled by scheduledFlow.collectAsState(initial = emptyList())
             val packStates = ModelCatalog.packs.associate { pack ->
                 pack.id to effectivePackState(app.packInstaller, pack, serviceStates[pack.id])
             }
@@ -67,7 +96,14 @@ class OnboardingActivity : ComponentActivity() {
                     imeSelected = imeSelected,
                     micGranted = micGranted,
                     packStates = packStates,
-                    onStepChange = { currentStep = it },
+                    scheduled = scheduled,
+                    networkState = networkState,
+                    onStepChange = { step ->
+                        currentStep = step
+                        // Reaching the end counts as done however the user got there, with or
+                        // without downloads.
+                        if (step == OnboardingStep.DONE) SetupState.markComplete(this)
+                    },
                     onOpenImeSettings = {
                         startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
                     },
@@ -90,17 +126,25 @@ class OnboardingActivity : ComponentActivity() {
                             ),
                         )
                     },
-                    onDownloadPack = { packId ->
-                        ModelDownloadService.start(this, packId)
+                    onDownloadPack = { packId, allowMetered ->
+                        if (allowMetered) {
+                            ModelDownloadService.startAllowingMetered(this, packId)
+                        } else {
+                            ModelDownloadService.start(this, packId)
+                        }
                     },
                     onCancelDownloads = {
                         ModelDownloadService.cancel(this)
                     },
                     onOpenSettings = {
+                        SetupState.markComplete(this)
                         startActivity(Intent(this, SettingsActivity::class.java))
                         finish()
                     },
-                    onFinished = { finish() },
+                    onFinished = {
+                        SetupState.markComplete(this)
+                        finish()
+                    },
                 )
             }
         }
@@ -126,6 +170,7 @@ class OnboardingActivity : ComponentActivity() {
             ?.contains(packageName) == true
         micGranted =
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        networkState = ModelDownloadService.networkState(this)
     }
 
     private fun refreshAndAdvance() {
@@ -139,14 +184,16 @@ class OnboardingActivity : ComponentActivity() {
     }
 
     private fun firstIncompleteStep(app: VBoardApp): OnboardingStep {
-        val requiredInstalled = ModelCatalog.packs
-            .filter { it.required }
-            .all { app.packInstaller.stateOf(it) == PackState.Installed }
+        val installedIds = app.modelStore.installedPackIds(app.packInstaller)
+        val canDictate = ModelReadiness.canDictate(installedIds)
         return when {
             !imeEnabled -> OnboardingStep.WELCOME
             !imeSelected -> OnboardingStep.SELECT
             !micGranted -> OnboardingStep.MIC
-            !requiredInstalled -> OnboardingStep.MODELS
+            // Only steer a user to the downloads if they have never finished setup. Once
+            // they have chosen to skip, the launcher icon must not re-open onto the screen
+            // they walked away from (PRODUCT_SPEC VB-408).
+            !canDictate && !SetupState.isComplete(this) -> OnboardingStep.MODELS
             else -> OnboardingStep.DONE
         }
     }

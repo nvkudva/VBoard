@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -43,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,13 +57,20 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vboard.app.R
+import com.vboard.app.models.ModelDownloadService
+import com.vboard.core.model.ByteSize
+import com.vboard.core.model.DownloadDecision
+import com.vboard.core.model.DownloadPolicy
+import com.vboard.core.model.DownloadSizes
 import com.vboard.core.model.InstallError
 import com.vboard.core.model.ModelCatalog
+import com.vboard.core.model.ModelKind
 import com.vboard.core.model.ModelPack
+import com.vboard.core.model.ModelReadiness
+import com.vboard.core.model.NetworkState
 import com.vboard.core.model.PackInstaller
 import com.vboard.core.model.PackState
 import kotlinx.coroutines.delay
-import java.util.Locale
 
 /** The linear onboarding steps, in order. */
 enum class OnboardingStep { WELCOME, ENABLE, SELECT, MIC, MODELS, DONE }
@@ -83,12 +92,11 @@ internal fun effectivePackState(
     else -> installer.stateOf(pack)
 }
 
-internal fun formatBytes(bytes: Long): String =
-    if (bytes >= 1_000_000_000L) {
-        String.format(Locale.US, "%.1f GB", bytes / 1_000_000_000.0)
-    } else {
-        "${bytes / 1_000_000L} MB"
-    }
+/**
+ * Renders a byte count for display. Delegates to [ByteSize] so setup, settings and the
+ * download notifications cannot disagree, and so the numbers are unit-tested in `:core`.
+ */
+internal fun formatBytes(bytes: Long): String = ByteSize.format(bytes)
 
 internal fun installErrorText(error: InstallError, pack: ModelPack? = null): String = when (error) {
     InstallError.NETWORK -> "Download interrupted. Check your connection and retry."
@@ -111,26 +119,29 @@ fun OnboardingFlow(
     imeSelected: Boolean,
     micGranted: Boolean,
     packStates: Map<String, PackState>,
+    scheduled: List<ModelDownloadService.Scheduled>,
+    networkState: NetworkState,
     onStepChange: (OnboardingStep) -> Unit,
     onOpenImeSettings: () -> Unit,
     onShowImePicker: () -> Unit,
     onRecheckSystemState: () -> Unit,
     onMicResult: (Boolean) -> Unit,
     onOpenAppSettings: () -> Unit,
-    onDownloadPack: (String) -> Unit,
+    onDownloadPack: (packId: String, allowMetered: Boolean) -> Unit,
     onCancelDownloads: () -> Unit,
     onOpenSettings: () -> Unit,
     onFinished: () -> Unit,
 ) {
-    val requiredInstalled = ModelCatalog.packs
-        .filter { it.required }
-        .all { packStates[it.id] == PackState.Installed }
+    val installedIds = packStates.filterValues { it == PackState.Installed }.keys
+    // "Can the user dictate?", not "are all the files present?". The two stopped being the
+    // same question once the accuracy pack became an optional upgrade.
+    val canDictate = ModelReadiness.canDictate(installedIds)
     val completed = buildSet {
         if (step != OnboardingStep.WELCOME) add(OnboardingStep.WELCOME)
         if (imeEnabled) add(OnboardingStep.ENABLE)
         if (imeSelected) add(OnboardingStep.SELECT)
         if (micGranted) add(OnboardingStep.MIC)
-        if (requiredInstalled) add(OnboardingStep.MODELS)
+        if (canDictate) add(OnboardingStep.MODELS)
         if (step == OnboardingStep.DONE) add(OnboardingStep.DONE)
     }
     Scaffold { innerPadding ->
@@ -171,12 +182,15 @@ fun OnboardingFlow(
                     )
                     OnboardingStep.MODELS -> ModelsStep(
                         packStates = packStates,
-                        requiredInstalled = requiredInstalled,
+                        scheduled = scheduled,
+                        networkState = networkState,
+                        canDictate = canDictate,
                         onDownloadPack = onDownloadPack,
                         onCancelDownloads = onCancelDownloads,
                         onFinish = { onStepChange(OnboardingStep.DONE) },
                     )
                     OnboardingStep.DONE -> DoneStep(
+                        canDictate = canDictate,
                         onOpenSettings = onOpenSettings,
                         onClose = onFinished,
                     )
@@ -453,24 +467,48 @@ private fun MicStep(
     }
 }
 
+/**
+ * The step that used to be a dead end.
+ *
+ * Three things changed. The Finish button is unconditionally enabled, so setup can always be
+ * completed — with nothing downloaded, the keyboard still types. Every size in the copy is
+ * computed from [ModelCatalog] instead of written by hand. And a download on a metered link
+ * asks first, naming the real number of megabytes it is about to spend.
+ */
 @Composable
 private fun ModelsStep(
     packStates: Map<String, PackState>,
-    requiredInstalled: Boolean,
-    onDownloadPack: (String) -> Unit,
+    scheduled: List<ModelDownloadService.Scheduled>,
+    networkState: NetworkState,
+    canDictate: Boolean,
+    onDownloadPack: (packId: String, allowMetered: Boolean) -> Unit,
     onCancelDownloads: () -> Unit,
     onFinish: () -> Unit,
 ) {
+    val sizes = remember { DownloadSizes.of() }
+    var meteredPrompt by remember { mutableStateOf<Pair<ModelPack, Long>?>(null) }
+
+    /** Routes a tap through [DownloadPolicy] so cellular data is never spent silently. */
+    fun requestDownload(pack: ModelPack) {
+        when (val decision = DownloadPolicy.decide(networkState, meteredConsent = false, bytes = pack.totalBytes)) {
+            is DownloadDecision.Enqueue -> onDownloadPack(pack.id, decision.allowMetered)
+            is DownloadDecision.ConfirmMetered -> meteredPrompt = pack to decision.bytes
+        }
+    }
+
     StepScaffold(
         icon = Icons.Filled.CloudDownload,
-        title = "Download the voice engine",
-        body = "VBoard needs about 1 GB of models for speech recognition. " +
-            "Download once, then everything works offline.",
+        title = stringResource(R.string.setup_models_title),
+        body = stringResource(R.string.setup_models_body, sizes.requiredText),
     ) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Large download — Wi-Fi recommended. With the optional Smart cleanup " +
-                    "model the full set is about 1.4 GB.",
+                text = when (networkState) {
+                    NetworkState.UNMETERED ->
+                        stringResource(R.string.setup_models_wifi_hint, sizes.totalText)
+                    NetworkState.METERED -> stringResource(R.string.setup_models_mobile_hint)
+                    NetworkState.OFFLINE -> stringResource(R.string.setup_models_offline_hint)
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(16.dp),
             )
@@ -480,27 +518,77 @@ private fun ModelsStep(
             PackRow(
                 pack = pack,
                 state = packStates[pack.id] ?: PackState.NotInstalled,
-                onDownload = { onDownloadPack(pack.id) },
+                scheduled = scheduled.firstOrNull { it.packId == pack.id },
+                onDownload = { requestDownload(pack) },
                 onCancel = onCancelDownloads,
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
         Spacer(modifier = Modifier.height(8.dp))
+        // Always enabled. Gating this on a download is what turned setup into a funnel with
+        // no exit: a user on a slow or expensive connection had no way to reach a working
+        // keyboard, which they already had.
         Button(
             onClick = onFinish,
-            enabled = requiredInstalled,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(stringResource(R.string.onboarding_finish))
+            Text(
+                text = if (canDictate) {
+                    stringResource(R.string.onboarding_finish)
+                } else {
+                    stringResource(R.string.setup_skip_downloads)
+                },
+            )
         }
-        if (!requiredInstalled) {
+        if (!canDictate) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "The two transcription models are required for voice typing.",
+                text = stringResource(R.string.setup_skip_note),
                 style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+
+    val prompt = meteredPrompt
+    if (prompt != null) {
+        val (pack, bytes) = prompt
+        AlertDialog(
+            onDismissRequest = { meteredPrompt = null },
+            title = { Text(stringResource(R.string.setup_metered_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.setup_metered_body,
+                        pack.displayName,
+                        ByteSize.format(bytes),
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        meteredPrompt = null
+                        onDownloadPack(pack.id, true)
+                    },
+                ) {
+                    Text(stringResource(R.string.setup_metered_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        meteredPrompt = null
+                        // Queue it anyway: the constraint holds it until Wi-Fi, which is
+                        // what "wait for Wi-Fi" means to the user.
+                        onDownloadPack(pack.id, false)
+                    },
+                ) {
+                    Text(stringResource(R.string.setup_metered_wait))
+                }
+            },
+        )
     }
 }
 
@@ -508,6 +596,7 @@ private fun ModelsStep(
 private fun PackRow(
     pack: ModelPack,
     state: PackState,
+    scheduled: ModelDownloadService.Scheduled?,
     onDownload: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -520,17 +609,54 @@ private fun PackRow(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
+                        // Size always comes from the catalog, never from prose.
                         text = if (pack.required) {
-                            formatBytes(pack.totalBytes)
+                            stringResource(R.string.setup_pack_required, formatBytes(pack.totalBytes))
                         } else {
-                            "Optional · ${formatBytes(pack.totalBytes)}"
+                            stringResource(R.string.setup_pack_optional, formatBytes(pack.totalBytes))
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // An optional pack has to read as an upgrade the user may take, not as a
+                    // missing dependency; say what it buys and that voice works without it.
+                    val upgradeNote = when {
+                        pack.required -> null
+                        pack.kind == ModelKind.FINAL_ASR -> stringResource(R.string.setup_upgrade_accuracy)
+                        pack.kind == ModelKind.REFINER_LLM -> stringResource(R.string.setup_upgrade_refiner)
+                        else -> null
+                    }
+                    if (upgradeNote != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = upgradeNote,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 PackStateChip(state)
+            }
+            // Enqueued-but-not-running is a real state the old service could not express:
+            // the download is scheduled and the system is holding it for Wi-Fi.
+            if (scheduled?.waitingForNetwork == true && state != PackState.Installed) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stringResource(R.string.setup_pack_waiting_wifi),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = onCancel) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.pack_cancel),
+                        )
+                    }
+                }
+                return@Column
             }
             when (state) {
                 is PackState.Downloading -> {
@@ -569,7 +695,12 @@ private fun PackRow(
                 PackState.NotInstalled -> {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(onClick = onDownload) {
-                        Text(stringResource(R.string.pack_download))
+                        Text(
+                            stringResource(
+                                R.string.setup_pack_download_sized,
+                                formatBytes(pack.totalBytes),
+                            ),
+                        )
                     }
                 }
                 PackState.Installed -> {
@@ -610,14 +741,25 @@ private fun PackStateChip(state: PackState) {
 
 @Composable
 private fun DoneStep(
+    canDictate: Boolean,
     onOpenSettings: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val sizes = remember { DownloadSizes.of() }
     StepScaffold(
         icon = Icons.Filled.CheckCircle,
-        title = "You're all set.",
-        body = "Tap the mic key anytime to start talking. " +
-            "VBoard cleans up your words as you speak — all on-device.",
+        // Finishing without the models is a success, not a half-finished setup: the keyboard
+        // works. The copy has to say that rather than imply something is still missing.
+        title = if (canDictate) {
+            stringResource(R.string.setup_done_title_voice)
+        } else {
+            stringResource(R.string.setup_done_title_typing)
+        },
+        body = if (canDictate) {
+            stringResource(R.string.setup_done_body_voice)
+        } else {
+            stringResource(R.string.setup_done_body_typing, sizes.requiredText)
+        },
     ) {
         Button(
             onClick = onOpenSettings,

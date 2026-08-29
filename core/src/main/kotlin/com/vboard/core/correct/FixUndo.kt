@@ -99,6 +99,27 @@ class FixUndoStore(val windowMs: Long = DEFAULT_WINDOW_MS) {
         return held
     }
 
+    /**
+     * Points the outstanding undo at [applied] instead, keeping the original text
+     * and the existing deadline.
+     *
+     * This is what keeps whole-field undo alive after a per-change revert: the
+     * field has moved, but what the user would want back has not, and expiring
+     * the safety net early because they took one word back would be backwards.
+     */
+    fun reapply(applied: String, nowMs: Long, fieldToken: Long): Boolean {
+        val held = peek(nowMs, fieldToken) ?: return false
+        snapshot = FixUndoSnapshot(
+            original = held.originalText(),
+            selectionStart = held.selectionStart,
+            selectionEnd = held.selectionEnd,
+            applied = applied,
+            fieldToken = held.fieldToken,
+            expiresAtMs = held.expiresAtMs,
+        )
+        return true
+    }
+
     /** [peek], and forget it: an undo is only offered once. */
     fun consume(nowMs: Long, fieldToken: Long): FixUndoSnapshot? =
         peek(nowMs, fieldToken)?.also { snapshot = null }

@@ -177,18 +177,21 @@ class ToolbarView(
 
     private fun ensureCells() {
         if (cells.size == actions.size && actions.isNotEmpty()) return
-        if (actions.isEmpty()) {
+        // Height is what positions a pill, so there is nothing to compute before
+        // the first layout pass — and the accessibility tree may ask early.
+        if (actions.isEmpty() || width == 0 || height == 0) {
             cells = emptyList()
             return
         }
-        val top = dp(PILL_INSET_DP)
-        val bottom = height - dp(PILL_INSET_DP)
+        val pillTop = dp(PILL_INSET_DP)
+        val pillBottom = height - dp(PILL_INSET_DP)
         var x = dp(SIDE_PADDING_DP)
         cells = actions.map { action ->
             val labelWidth = labelPaint.measureText(action.label)
-            val width = dp(ICON_SIZE_DP) + dp(ICON_GAP_DP) + labelWidth + 2 * dp(PILL_PADDING_DP)
-            val rect = RectF(x, top, x + width, bottom)
-            x += width + dp(PILL_GAP_DP)
+            val pillWidth =
+                dp(ICON_SIZE_DP) + dp(ICON_GAP_DP) + labelWidth + 2 * dp(PILL_PADDING_DP)
+            val rect = RectF(x, pillTop, x + pillWidth, pillBottom)
+            x += pillWidth + dp(PILL_GAP_DP)
             rect
         }
     }
@@ -267,7 +270,6 @@ class ToolbarView(
                 iconPath.moveTo(cx - r - dp(2.5f), cy - dp(1.5f))
                 iconPath.lineTo(cx - r + dp(1.5f), cy - dp(4.5f))
                 iconPath.lineTo(cx - r + dp(3.5f), cy - dp(0.5f))
-                strokePaint.style = Paint.Style.STROKE
                 canvas.drawPath(iconPath, strokePaint)
             }
         }
@@ -341,11 +343,24 @@ class ToolbarView(
         ensureCells()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (message != null) {
+                    // The pills are not on screen right now; dismiss the status
+                    // line rather than firing an action the user cannot see.
+                    clearMessageNow()
+                    return true
+                }
                 val index = indexAt(event.x, event.y)
-                if (index >= 0 && actions[index].state != ActionState.DISABLED) {
+                if (index >= 0) {
+                    // A disabled pill still takes the tap: it answers with the
+                    // reason it is off, which is the whole point of drawing it
+                    // greyed out instead of hiding it.
                     pressedIndex = index
-                    if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    invalidate()
+                    if (actions[index].state != ActionState.DISABLED) {
+                        if (hapticsEnabled) {
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        }
+                        invalidate()
+                    }
                 }
                 return true
             }
@@ -372,15 +387,21 @@ class ToolbarView(
         return super.onTouchEvent(event)
     }
 
+    /**
+     * Hands the tap to the listener — including for a disabled action, so it can
+     * say why. A running action is swallowed here so a second tap cannot start a
+     * second fix even if the listener forgets to guard.
+     */
     private fun fire(action: Action) {
-        if (action.state == ActionState.DISABLED) return
+        if (action.state == ActionState.RUNNING) return
         clearMessageNow()
         listener?.onToolbarAction(action.id)
     }
 
     /**
-     * Nearest pill within a slop margin, so a tap that lands in the gap is still
-     * a tap on something — the pills are 40dp tall and the row is not.
+     * The pill under [x], within a small horizontal slop so a tap landing in the
+     * gap between two pills still hits one. The whole row height counts, so the
+     * 32dp pill has a 40dp target.
      */
     private fun indexAt(x: Float, y: Float): Int {
         val slop = dp(TOUCH_SLOP_DP)

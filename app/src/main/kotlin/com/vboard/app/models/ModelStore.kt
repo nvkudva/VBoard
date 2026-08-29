@@ -42,9 +42,33 @@ class ModelStore(context: Context) {
         val tokens: String,
     )
 
-    /** True when every required pack is installed AND extracted. */
-    fun speechModelsReady(installer: PackInstaller): Boolean =
-        streamingPaths(installer) != null && parakeetPaths(installer) != null
+    /**
+     * True when the user can press the mic and get words: the streaming recognizer is
+     * installed AND extracted.
+     *
+     * Deliberately does not consult the accuracy pack or the refiner. Those are opt-in
+     * upgrades ([com.vboard.core.model.ModelReadiness]); treating them as prerequisites is
+     * what made a first run cost 610 MB with no way past it.
+     */
+    fun dictationReady(installer: PackInstaller): Boolean = streamingPaths(installer) != null
+
+    /** True when the optional high-accuracy final pass is installed and extracted. */
+    fun accuracyModelReady(installer: PackInstaller): Boolean = parakeetPaths(installer) != null
+
+    /**
+     * True when every pack in the catalog is installed and extracted.
+     *
+     * Note the changed meaning: this used to be the app's definition of "ready to dictate",
+     * which is now [dictationReady]. Use that for anything that gates the mic.
+     */
+    fun allSpeechModelsReady(installer: PackInstaller): Boolean =
+        dictationReady(installer) && accuracyModelReady(installer)
+
+    /** Ids of the packs currently installed, for [com.vboard.core.model.ModelReadiness]. */
+    fun installedPackIds(installer: PackInstaller): Set<String> =
+        ModelCatalog.packs
+            .filter { installer.stateOf(it) == PackState.Installed }
+            .mapTo(mutableSetOf()) { it.id }
 
     fun refinerModelPath(installer: PackInstaller): String? {
         val pack = ModelCatalog.byKind(ModelKind.REFINER_LLM).firstOrNull() ?: return null
