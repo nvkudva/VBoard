@@ -18,13 +18,13 @@ gap.
 | Area | Test classes | Status |
 |---|---|---|
 | Transcript cleanup (unit) | `TranscriptCleanerTest` | ✅ pass |
-| Cleanup golden corpus | `qa/CleanupGoldenCorpusTest` (44 cases + regressions) | ✅ 1 skip (VB-QA-12) |
+| Cleanup golden corpus | `qa/CleanupGoldenCorpusTest` (53 cases + 5 regressions) | ✅ pass |
 | Cleanup properties | `qa/CleanupPropertyTest` | ✅ 1 skip (VB-QA-05) |
 | Cleanup invariants (generative, ~55k cases) | `qa/CleanupInvariantQaTest` | ✅ 3 skips |
-| Unicode safety | `qa/UnicodeSafetyQaTest` | ✅ 5 skips |
-| Tokenizer symbol loss | `qa/TokenizerSymbolLossQaTest` | ✅ 3 skips |
+| Unicode safety | `qa/UnicodeSafetyQaTest` | ✅ pass |
+| Tokenizer symbol loss | `qa/TokenizerSymbolLossQaTest` | ✅ pass |
 | Spoken-command safety | `qa/SpokenCommandSafetyQaTest` | ✅ 4 skips |
-| Raw-mode fidelity | `qa/RawModeFidelityQaTest` | ✅ 2 skips |
+| Raw-mode fidelity | `qa/RawModeFidelityQaTest` | ✅ pass |
 | Commit planning & text diff | `CommitPlannerTest`, `TextDiffTest`, `qa/CommitSeamQaTest` | ✅ 3 skips |
 | Clipboard privacy | `qa/ClipboardPrivacyQaTest` | ✅ 3 skips |
 | Typed-text safety | `qa/TypedTextSafetyQaTest` | ✅ 2 skips |
@@ -50,7 +50,7 @@ same suite plus the Android debug and R8 release builds on every push.
 | VB-QA-03 | Low | "actually no" self-correction trigger from VB-202 was unimplemented. | **Fixed** — added as a strong marker with semantic alignment ("for may actually no june" → "for june"). |
 | VB-QA-05 | Low | Idempotency (VB-206) breaks on pathological inputs: 5+ stacked correction markers, "scratch that scratch that" (output can re-trigger a command if re-cleaned), "\n\n\n" re-tokenizes to "\n\n". | **Open, documented** — cleanup runs exactly once per utterance in the product, so the double-clean path is unreachable in practice; test kept `@Disabled` as the spec-correct pin. |
 | VB-QA-04 | Low | Raw mode is documented as bypassing every transformation, but the tokenizer runs first regardless. | **Superseded by VB-QA-17**, which turns the note into assertions. |
-| VB-QA-12 | Medium | `$` is not in `Tokenizer.PUNCT_CHARS`, so "it costs $75 dollars" → "It costs 75 dollars." | **Open** — subsumed by VB-QA-13; fixing it in isolation is the wrong shape (see Package A). |
+| VB-QA-12 | Medium | `$` was not in `Tokenizer.PUNCT_CHARS`, so "it costs $75 dollars" → "It costs 75 dollars." | ✅ **Fixed** by Package A, as a consequence of VB-QA-13 rather than in isolation. |
 
 `VB-QA-08` was never assigned and is deliberately left unused.
 
@@ -58,35 +58,43 @@ same suite plus the Android debug and R8 release builds on every push.
 
 Ids continue the series. Every finding is pinned by a **passing** test asserting
 *current* behaviour, and where the correct behaviour is clear, by a `@Disabled`
-test asserting what it *should* do. Nothing below is fixed.
+test asserting what it *should* do.
+
+**Status.** Wave 1.5 Package A has since landed, closing VB-QA-12, -13, -14,
+-15, -16, -17, -21 and -27; those rows are marked ✅ **Fixed** below and their
+tests are enabled. Everything else in this section is still open. The findings
+are left describing the defect as it was found, because that is what the
+enabled tests now assert the inverse of.
 
 ### 3.1 One defect, five symptoms
 
-`Tokens.kt` iterates UTF-16 `Char`s and keeps a character only when
-`Char.isLetterOrDigit()` is true or it appears in a 13-character punctuation
-allow-list. The `else` branch calls `flushWord()`, so an unrecognized character
-is not merely deleted — **it also inserts a word boundary, splitting the word it
-sat inside**. That single mechanism produces VB-QA-13, -14, -15, -16 and -17.
+✅ **Fixed by Package A.** Described below as it was found.
 
-What survives cleanup today: anything `isLetterOrDigit()`; the 13 punctuation
+`Tokens.kt` iterated UTF-16 `Char`s and kept a character only when
+`Char.isLetterOrDigit()` was true or it appeared in a 13-character punctuation
+allow-list. The `else` branch called `flushWord()`, so an unrecognized character
+was not merely deleted — **it also inserted a word boundary, splitting the word
+it sat inside**. That single mechanism produced VB-QA-13, -14, -15, -16 and -17.
+
+What survived cleanup before the fix: anything `isLetterOrDigit()`; the 13 punctuation
 characters `! " # % & ( ) , . : ; ? @`; `-` and `'` only when word-internal;
-`…`/`...`; `\n`. Everything else is dropped — **88,833 of 138,552 named Unicode
+`…`/`...`; `\n`. Everything else was dropped — **88,833 of 138,552 named Unicode
 code points, 64%**.
 
 | ID | Severity | Finding | Evidence |
 |---|---|---|---|
-| VB-QA-15 | **Critical** | Combining marks (Mn/Mc) are deleted *and* split their word. Devanagari, Thai and every script whose vowels/tone marks are combining characters become unwritable; for Latin the outcome depends on the input's normalization form, which no ASR engine guarantees. | `hindi नमस्ते दुनिया आज` → `Hindi नमस त द न य आज.` · NFD `café is open now` → `Cafe is open now.` |
-| VB-QA-14 | **High** | Every non-BMP code point is deleted — both halves of a surrogate pair fail `isLetterOrDigit()`. 77,702 named astral letters/numbers plus 6,605 BMP symbols. | `hello 👋 world here` → `Hello world here.` · `han 𠮷 char here` → `Han char here.` |
-| VB-QA-13 | **High** | Every symbol outside the allow-list is deleted and splits its word. By category: So 6,605 · Mn 1,950 · Sm 948 · Po 592 · Mc 445 · Cf 163 · Sc (currency) 63 · Pd 24 … | `the cost is €40` → `The cost is 40.` · `a + b = c` → `A b c.` · `C++ code here` → `C code here.` · `half is 1/2 cup` → `Half is 1 2 cup.` |
-| VB-QA-17 | **High** | Raw mode is not verbatim. `Cleanup.kt` documents it as bypassing every transformation except commands, but `TranscriptCleaner.clean` runs `Tokenizer.tokenize` **before** `rawMode` is consulted anywhere. This is the setting a user turns on *because* cleanup mangled something. | raw `hello 👋` → `hello` · raw `$75` → `75` · raw `under_score` → `under score` |
-| VB-QA-16 | Medium | Bidi controls (RLE/PDF/LRM/RLM) are stripped. Letters survive; the overrides that fixed their visual order do not, so mixed-direction text can render in a different order than dictated. | `‫هذا نص‬ عربي هنا` → order not preserved |
+| VB-QA-15 | **Critical** · ✅ Fixed | Combining marks (Mn/Mc) are deleted *and* split their word. Devanagari, Thai and every script whose vowels/tone marks are combining characters become unwritable; for Latin the outcome depends on the input's normalization form, which no ASR engine guarantees. | `hindi नमस्ते दुनिया आज` → `Hindi नमस त द न य आज.` · NFD `café is open now` → `Cafe is open now.` |
+| VB-QA-14 | **High** · ✅ Fixed | Every non-BMP code point is deleted — both halves of a surrogate pair fail `isLetterOrDigit()`. 77,702 named astral letters/numbers plus 6,605 BMP symbols. | `hello 👋 world here` → `Hello world here.` · `han 𠮷 char here` → `Han char here.` |
+| VB-QA-13 | **High** · ✅ Fixed | Every symbol outside the allow-list is deleted and splits its word. By category: So 6,605 · Mn 1,950 · Sm 948 · Po 592 · Mc 445 · Cf 163 · Sc (currency) 63 · Pd 24 … | `the cost is €40` → `The cost is 40.` · `a + b = c` → `A b c.` · `C++ code here` → `C code here.` · `half is 1/2 cup` → `Half is 1 2 cup.` |
+| VB-QA-17 | **High** · ✅ Fixed | Raw mode is not verbatim. `Cleanup.kt` documents it as bypassing every transformation except commands, but `TranscriptCleaner.clean` runs `Tokenizer.tokenize` **before** `rawMode` is consulted anywhere. This is the setting a user turns on *because* cleanup mangled something. | raw `hello 👋` → `hello` · raw `$75` → `75` · raw `under_score` → `under score` |
+| VB-QA-16 | Medium · ✅ Fixed | Bidi controls (RLE/PDF/LRM/RLM) are stripped. Letters survive; the overrides that fixed their visual order do not, so mixed-direction text can render in a different order than dictated. | `‫هذا نص‬ عربي هنا` → order not preserved |
 
-**This determines the shape of the fix.** It is not "add `$` to the allow-list".
+**This determined the shape of the fix.** It was not "add `$` to the allow-list".
 A wider allow-list must enumerate 63 currency signs, 948 math symbols and 24
-dashes and still leaves Mn/Mc/Cf and the whole astral plane broken. The change
-that closes all five is a *policy* inversion: **iterate code points, and go from
-allow-list-keep to deny-list-drop**, where the deny-list is only the small closed
-set of ASR artifacts.
+dashes and would still leave Mn/Mc/Cf and the whole astral plane broken. The
+change that closed all five was a *policy* inversion: **iterate code points, and
+go from allow-list-keep to deny-list-drop**, where the deny-list is only the
+small closed set of ASR artifacts.
 
 ### 3.2 Destructive stages fire on surface form alone
 
@@ -96,8 +104,8 @@ set of ASR artifacts.
 | VB-QA-19 | **High** | "scratch that" mid-sentence takes the `isScratch` branch and cuts back to `clauseStartBefore`, which with no punctuation in the utterance is index 0. | `tell him i need to scratch that itch` → **`Itch`** (7 words in, 1 out) |
 | VB-QA-20 | **High** | `no wait` / `wait no` fire as correction markers at index 0. Every other marker carries an `i > 0` requirement; these two do not. | `no wait for me` → `For me` · `no wait i am coming` → `I am coming.` |
 | VB-QA-29 | Medium | `FieldKind.allowsAutoCapitalize` gates only the *first* word. `capitalize` then walks the whole token list, re-capitalizing after every `.`/`!`/`?` and every break — in EMAIL, URI, **PASSWORD** and NUMBER fields, which the spec says must be left alone. | PASSWORD: `hello. world here` → `hello. World here` |
-| VB-QA-21 | Medium | `ARTIFACT_REGEX` matches `\[[a-z_ ]+]`, so any bracketed lowercase prose is deleted — and artifact scrubbing is gated by **no option at all**, not even `rawMode`. | `see [see attached] for details` → `See for details.` |
-| VB-QA-27 | Medium | `sentenceStartsAt` knows only `.`, `!`, `?` and newline — no capitalization after a closing quote or bracket, after an ellipsis, or after `。`/`！`/`？`/`؟`/`।`. The quoted-sentence case is common in English messaging. | `abc." def` → `def` not capitalized |
+| VB-QA-21 | Medium · ✅ Fixed | `ARTIFACT_REGEX` matches `\[[a-z_ ]+]`, so any bracketed lowercase prose is deleted — and artifact scrubbing is gated by **no option at all**, not even `rawMode`. | `see [see attached] for details` → `See for details.` |
+| VB-QA-27 | Medium · ✅ Fixed | `sentenceStartsAt` knows only `.`, `!`, `?` and newline — no capitalization after a closing quote or bracket, after an ellipsis, or after `。`/`！`/`？`/`؟`/`।`. The quoted-sentence case is common in English messaging. | `abc." def` → `def` not capitalized |
 | VB-QA-30 | Low | Adjacent `Tok.Break`s are never merged; the spoken path can emit three newlines. This is the mechanism behind case (c) of VB-QA-05. | `hello new paragraph new line world` |
 | VB-QA-31 | Low | `"..."` is absent from `SENTENCE_ENDERS` and is not string-equal to `"."`, so punctuation stacks onto it. | `tell me comma ellipsis and go` → `Tell me,... and go.` |
 
@@ -176,8 +184,8 @@ autocorrect revert-on-backspace. Several are **also product gaps** — see §4.
 
 ### Honest assessment of the suite before this pass
 
-1. **The 44-case golden corpus is a *ceiling*, not a floor.** It is entirely
-   ASCII English. It tells you the pipeline is right about 44 English sentences;
+1. **The 53-case golden corpus is a *ceiling*, not a floor.** It is entirely
+   ASCII English. It tells you the pipeline is right about 53 English sentences;
    nothing told you it is catastrophically wrong about a Hindi one. 626 passing
    tests said nothing about 64% of Unicode.
 2. **The property tests were narrower than they read.** `CleanupPropertyTest`
@@ -186,9 +194,10 @@ autocorrect revert-on-backspace. Several are **also product gaps** — see §4.
    branches on failed five structural invariants on the first run, two of them
    real bugs (VB-QA-29, VB-QA-30).
 3. **Findings were pinned by behaviour, not by id.** You could not grep an id and
-   get a yes/no. `QaRegressionPinTest` now gives one test per report id,
-   including two that assert *open* findings are still open and fail if someone
-   fixes them without updating this document.
+   get a yes/no. `QaRegressionPinTest` now gives one test per report id.
+   Pins that asserted an *open* finding were deliberately written to fail when
+   someone fixes it without updating this document; Package A tripped the
+   VB-QA-12 pin, which was flipped to assert the fixed behaviour.
 
 **The blind spot, stated plainly:** every destructive stage was tested only on
 inputs where it was *supposed* to fire. Nothing tested the far larger space of
@@ -197,7 +206,7 @@ looked healthy.
 
 ## 6. Traceability highlights (core-testable requirements)
 
-- VB-2xx cleanup requirements → `TranscriptCleanerTest`, `CleanupGoldenCorpusTest` (44 realistic utterances across messaging/email/notes/addresses/questions), `CleanupPropertyTest` (idempotency, never-throws, no double spaces, option independence, raw-mode contract).
+- VB-2xx cleanup requirements → `TranscriptCleanerTest`, `CleanupGoldenCorpusTest` (53 realistic utterances across messaging/email/notes/addresses/questions), `CleanupPropertyTest` (idempotency, never-throws, no double spaces, option independence, raw-mode contract).
 - VB-1xx dictation lifecycle → `DictationStateMachineTest` (happy paths, continuous dictation, scratch-that, silence timeout, watchdog fallback semantics) + `StateMachineFuzzTest` invariants (no commit from Idle/Error, StopAudio on session exit, monotone utterance index, never throws).
 - VB-3xx typing/autocorrect → `SuggestionEngineQaTest` (100 sampled lexicon words never autocorrected, casing gates, apostrophes, field gating: PASSWORD/NUMBER empty, EMAIL/URI literal-only, OFF-mode inertness).
 - VB-4xx model management → `PackInstallerTest` + `ModelInstallerQaTest` (resume with exact byte accounting, checksum mismatch, cancellation, storage pre-check, process-restart persistence, version bump, concurrent installs, delete-during-download).
@@ -247,7 +256,7 @@ concurrently. **A lands first** — it shrinks both of the others. W1.2 (spoken-
 touches `Tokens.kt` and must not start until A has landed — the wave ordering
 already guarantees that.
 
-### Package A — Unicode-safe text core
+### Package A — Unicode-safe text core ✅ **Landed**
 
 **Why one package and not five.** VB-QA-13, -14, -15, -16 and -17 are one defect
 described five ways (§3.1). Fixing any one symptom by widening the allow-list
@@ -263,12 +272,26 @@ VB-QA-21 is the same inversion applied to `ARTIFACT_REGEX`.
 `RawModeFidelityQaTest`, plus `CleanupGoldenCorpusTest`'s VB-QA-12 skip.
 
 **Done when:** 11 `@Disabled` tests pass with the annotation removed; the golden
-corpus's 44 cases are unchanged; `CleanupInvariantQaTest` is still green — it is
+corpus's 53 cases are unchanged; `CleanupInvariantQaTest` is still green — it is
 the guard against a fix that preserves *too much* and breaks output hygiene.
+
+**Outcome.** All 11 are enabled and green; the core suite is 761 tests, 0
+failures, 18 skipped (was 29). The golden corpus needed one case changed —
+`that jacket costs $75` now keeps its `$`, which is the VB-QA-12 fix rather than
+a corpus edit — and `QaRegressionPinTest`'s VB-QA-12 pin was flipped for the same
+reason. `sentenceStartsAt` was taken by A after all, closing VB-QA-27; Package B
+inherits it in its fixed state. Two additions beyond the plan: the non-raw path
+normalizes to NFC (raw mode is exempt, since normalization is itself a
+transformation), and structural punctuation with a word character on both sides
+is treated as intra-word, so `a_b@c.com` and `well-known` survive as one word.
 
 **Land this first.** Package B's `sentenceStartsAt` work and Package C's
 `ContentGuard` work both shrink or disappear once it does: VB-QA-33 and -34 exist
-only because `ContentGuard` is compensating for `Tokenizer`.
+only because `ContentGuard` is compensating for `Tokenizer`. Partly borne out:
+`TypedTextSafetyQaTest`'s guarded/unguarded comparison pairs are now identical,
+so the *shield* no longer changes the outcome for those inputs — but VB-QA-33
+and -34 are defects in `ContentGuard.needsShield` itself and remain open, with
+their two `@Disabled` tests still disabled for Package C.
 
 ### Package B — Destructive-stage confidence and field-kind honesty
 
@@ -286,16 +309,15 @@ working; the determiner guard's six current saves must keep working;
 inert.
 
 **Files:** `core/text/TranscriptCleaner.kt` (owner — stages 2, 3, 5, and
-`sentenceStartsAt`/`capitalize`), `FieldKind.kt`, `Cleanup.kt` (`CleanupResult`,
-for the G3 counter). **Tests:** `SpokenCommandSafetyQaTest`,
-`CleanupInvariantQaTest`, and VB-QA-27's `sentenceStartsAt` test in
-`UnicodeSafetyQaTest`.
+`capitalize`), `FieldKind.kt`, `Cleanup.kt` (`CleanupResult`, for the G3
+counter). **Tests:** `SpokenCommandSafetyQaTest`, `CleanupInvariantQaTest`.
 
-*The `sentenceStartsAt` overlap with Package A is the one place the boundary is
-not clean.* If both ever run at once, B takes `TranscriptCleaner.kt` entirely and
-A confines itself to `Tokens.kt` plus the `ARTIFACT_REGEX` constant.
+*The `sentenceStartsAt` overlap with Package A was the one place the boundary was
+not clean, and A took it* — VB-QA-27's test lives in `UnicodeSafetyQaTest`, which
+A owned. B inherits `sentenceStartsAt` already fixed and should not need to touch
+it; the `capitalize` walk it does still own is VB-QA-29.
 
-**Done when:** 8 `@Disabled` tests pass; `CleanupResult` gains a counter for
+**Done when:** its 7 remaining `@Disabled` tests pass; `CleanupResult` gains a counter for
 spoken-command substitutions and the counter-honesty test is rewritten to assert
 the new behaviour; VB-QA-29's `PASSWORD` case is closed — it is the one with a
 privacy story.

@@ -100,18 +100,21 @@ class TypedTextSafetyQaTest {
     // ------------------------------- how much the guard is actually carrying
 
     @Test
-    fun `the same text through the unguarded cleaner is mangled (pinned)`() {
+    fun `the unguarded cleaner no longer mangles this text`() {
         // Same options, same cleaner, only ContentGuard removed. This is exactly
-        // what a new caller gets by writing the obvious thing.
+        // what a new caller gets by writing the obvious thing — and after Package A
+        // it gets the same answer, because the mangling these cases measured was
+        // the tokenizer's allow-list, not something the guard has to carry.
+        // See QA_REPORT VB-QA-33/-34: the guard is doing much less work now.
         val comparison = mapOf(
-            "check https://a.co/x now" to ("Check https://a.co/x now." to "Check https: a. Co x now."),
-            "the value is 3.14 exactly" to ("The value is 3.14 exactly." to "The value is 3. 14 exactly."),
-            "it costs $75 in total" to ("It costs $75 in total." to "It costs 75 in total."),
-            "nice work 👋 thanks" to ("Nice work 👋 thanks." to "Nice work thanks."),
+            "check https://a.co/x now" to ("Check https://a.co/x now." to "Check https://a.co/x now."),
+            "the value is 3.14 exactly" to ("The value is 3.14 exactly." to "The value is 3.14 exactly."),
+            "it costs $75 in total" to ("It costs $75 in total." to "It costs $75 in total."),
+            "nice work 👋 thanks" to ("Nice work 👋 thanks." to "Nice work 👋 thanks."),
             "the path is /usr/local/bin here" to
-                ("The path is /usr/local/bin here." to "The path is usr local bin here."),
+                ("The path is /usr/local/bin here." to "The path is /usr/local/bin here."),
             "email me at a_b@c.com soon" to
-                ("Email me at a_b@c.com soon." to "Email me at a b @c. Com soon."),
+                ("Email me at a_b@c.com soon." to "Email me at a_b@c.com soon."),
         )
         for ((input, expected) in comparison) {
             val (guarded, raw) = expected

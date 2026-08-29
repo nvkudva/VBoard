@@ -6,7 +6,7 @@ package com.vboard.core.text
  * token list, then render back to a string with normalized spacing.
  */
 sealed interface Tok {
-    /** A word: letters/digits with internal apostrophes or hyphens. */
+    /** A word: any run of characters that is not structural punctuation or space. */
     data class Word(val text: String) : Tok
 
     /** A single punctuation character, e.g. "." "," "?" "\"" */
@@ -18,13 +18,59 @@ sealed interface Tok {
 
 object Tokenizer {
 
-    private const val PUNCT_CHARS = ".,!?;:\"“”&@#%()-—"
+    /**
+     * The punctuation the cleanup pipeline reasons about *structurally* — the
+     * characters later stages align on, collapse, or attach to a neighbour.
+     *
+     * This is deliberately NOT an allow-list of "characters the user may keep".
+     * Everything that is neither one of these, nor whitespace, nor a member of
+     * [isAsrArtifact]'s closed deny-list, is carried through inside a [Tok.Word].
+     * The old allow-list-keep policy deleted every currency sign, math symbol,
+     * combining mark and astral code point in the user's text (VB-QA-13…-17).
+     */
+    private val STRUCTURAL_PUNCT: Set<Int> = ".,!?;:\"&@#%()-".map { it.code }.toSet()
+
+    /**
+     * The only characters the tokenizer drops. Everything here is a recognizer
+     * or transport artifact that no user dictated and no field can render:
+     * control codes, unpaired surrogates (which an InputConnection write would
+     * reject outright), code points Unicode has not assigned, the byte-order
+     * mark, and the decoding replacement character.
+     *
+     * Unlike the old `else -> flushWord()`, dropping one of these does not end
+     * the current word — a deletion must never manufacture a word boundary the
+     * user never spoke.
+     */
+    private fun isAsrArtifact(cp: Int): Boolean = when (Character.getType(cp)) {
+        Character.CONTROL.toInt(),    // C0/C1; '\n' and '\t' are handled before this
+        Character.SURROGATE.toInt(),  // unpaired: would corrupt the target field
+        Character.UNASSIGNED.toInt(),
+        -> true
+        else -> cp == 0xFEFF || cp == 0xFFFD // BOM / replacement character
+    }
+
+    /** True for horizontal or vertical space, including non-breaking forms. */
+    private fun isSpace(cp: Int): Boolean =
+        Character.isWhitespace(cp) || Character.getType(cp) == Character.SPACE_SEPARATOR.toInt()
+
+    /** A code point that belongs inside a word: anything not space, structure or artifact. */
+    private fun isWordCp(cp: Int): Boolean =
+        cp != '\n'.code &&
+            cp != '…'.code &&
+            cp !in STRUCTURAL_PUNCT &&
+            !isSpace(cp) &&
+            !isAsrArtifact(cp)
 
     fun tokenize(input: String): MutableList<Tok> {
         val tokens = mutableListOf<Tok>()
+        // Typographic folding happens up front so the rules below only ever see
+        // the canonical ASCII form of a quote, an apostrophe or a dash.
         val normalized = input
             .replace('’', '\'')
             .replace('‘', '\'')
+            .replace('“', '"')
+            .replace('”', '"')
+            .replace('—', '-')
             .replace("\r\n", "\n")
         var i = 0
         val n = normalized.length
@@ -37,10 +83,17 @@ object Tokenizer {
             }
         }
 
+        /** True when the code point after the one at [at] can continue a word. */
+        fun nextContinuesWord(at: Int, width: Int): Boolean {
+            val j = at + width
+            return j < n && isWordCp(normalized.codePointAt(j))
+        }
+
         while (i < n) {
-            val c = normalized[i]
+            val cp = normalized.codePointAt(i)
+            val width = Character.charCount(cp)
             when {
-                c == '\n' -> {
+                cp == '\n'.code -> {
                     flushWord()
                     var count = 0
                     while (i < n && (normalized[i] == '\n' || normalized[i] == ' ')) {
@@ -50,33 +103,31 @@ object Tokenizer {
                     tokens.add(Tok.Break(if (count >= 2) "\n\n" else "\n"))
                     continue
                 }
-                c.isLetterOrDigit() -> word.append(c)
-                c == '\'' && word.isNotEmpty() && i + 1 < n && normalized[i + 1].isLetterOrDigit() ->
-                    word.append(c)
-                c == '-' && word.isNotEmpty() && i + 1 < n && normalized[i + 1].isLetterOrDigit() ->
-                    word.append(c)
-                c == '.' && i + 2 < n && normalized[i + 1] == '.' && normalized[i + 2] == '.' -> {
+                cp == '.'.code && i + 2 < n && normalized[i + 1] == '.' && normalized[i + 2] == '.' -> {
                     flushWord()
                     tokens.add(Tok.Punct("..."))
-                    i += 2
+                    i += 3
+                    continue
                 }
-                c == '…' -> {
+                cp == '…'.code -> {
                     flushWord()
                     tokens.add(Tok.Punct("..."))
                 }
-                c in PUNCT_CHARS -> {
-                    flushWord()
-                    val ch = when (c) {
-                        '“', '”' -> "\""
-                        '—' -> "-"
-                        else -> c.toString()
+                cp in STRUCTURAL_PUNCT -> {
+                    // Punctuation with a word character on both sides is *inside* a
+                    // word, not between two: "a_b@c.com", "well-known", "I'll".
+                    if (word.isNotEmpty() && nextContinuesWord(i, width)) {
+                        word.appendCodePoint(cp)
+                    } else {
+                        flushWord()
+                        tokens.add(Tok.Punct(String(Character.toChars(cp))))
                     }
-                    tokens.add(Tok.Punct(ch))
                 }
-                c.isWhitespace() -> flushWord()
-                else -> flushWord() // drop unrecognized symbols from ASR output
+                isSpace(cp) -> flushWord()
+                isAsrArtifact(cp) -> Unit // dropped, and deliberately without flushing
+                else -> word.appendCodePoint(cp)
             }
-            i++
+            i += width
         }
         flushWord()
         return tokens

@@ -93,14 +93,13 @@ class CleanupGoldenCorpusTest {
     }
 
     @Test
-    @Disabled("VB-QA-12: '$' is not in Tokenizer.PUNCT_CHARS and is dropped as an unknown symbol")
     fun `a spoken price keeps its currency symbol`() {
         // Nobody had checked whether the recognizer ever emits the glyph rather
         // than the word 'dollars'. If it does — and a price is exactly the kind
         // of thing a user dictates — the symbol disappears with no trace, which
         // is a silent corruption of the user's text rather than a formatting
-        // nicety. The golden case below pins today's behaviour; this pins what
-        // it should be.
+        // nicety. It did, and Package A closed it (VB-QA-12); the golden case
+        // below now asserts the same thing from the corpus side.
         assertEquals("That jacket costs $75.", clean("that jacket costs $75").text)
     }
 
@@ -108,12 +107,11 @@ class CleanupGoldenCorpusTest {
         val CASES: List<Case> = listOf(
             // ---------------------------------------------------- messaging
             Case(
-                // VB-QA-12: unrecognized symbols are dropped by the tokenizer,
-                // and '$' is not in its punctuation set. Pinned so a tokenizer
-                // change surfaces here rather than in a user's price.
-                "currency symbol is dropped from a dictated price",
+                // VB-QA-12 fixed: the tokenizer carries through every symbol that
+                // is not an ASR artifact, so a dictated price keeps its unit.
+                "currency symbol is kept in a dictated price",
                 "that jacket costs $75",
-                "That jacket costs 75.",
+                "That jacket costs $75.",
             ),
             Case(
                 "hesitation fillers removed, sentence capitalized and terminated",

@@ -6,27 +6,27 @@ import com.vboard.core.text.FieldKind
 import com.vboard.core.text.Tok
 import com.vboard.core.text.Tokenizer
 import com.vboard.core.text.TranscriptCleaner
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * `Tokenizer` recognizes exactly the punctuation in its `PUNCT_CHARS` string and
- * **silently deletes** every other symbol (`Tokens.kt:77`,
- * `else -> flushWord() // drop unrecognized symbols from ASR output`).
+ * Symbol fidelity through the tokenizer (VB-QA-12, -13, -21; Package A).
  *
- * VB-QA-12 already pinned the `$` case. This file pins the rest of the family,
- * because they are not one bug each: they are one policy applied to every symbol
- * outside a 17-character allow-list, and a fix has to change the policy.
+ * `Tokenizer` used to recognize exactly the punctuation in a `PUNCT_CHARS` string
+ * and silently delete every other symbol — and not even as a plain deletion, since
+ * the `else` branch also called `flushWord()`, so `under_score` became two words
+ * rather than one. Currency, math operators, paths, identifiers and email
+ * addresses all lost characters the user dictated.
  *
- * The deletion is not even a plain deletion. `flushWord()` also *ends the current
- * word*, so `under_score` does not become `underscore`, it becomes two words.
- * Any symbol the tokenizer does not know both disappears and inserts a space.
+ * The policy is now deny-list-drop: a symbol is carried through inside the word
+ * unless it is on the small closed artifact list, and structural punctuation with
+ * a word character on both sides is treated as intra-word.
  *
  * A second, unrelated deleter lives upstream: `TranscriptCleaner.ARTIFACT_REGEX`
- * (`TranscriptCleaner.kt:491`) removes `[...]` spans intended to catch ASR tags
- * like `[music]`, and it cannot tell those from an ordinary bracketed aside.
+ * matched `[...]` spans intended to catch ASR tags like `[music]` and could not
+ * tell those from an ordinary bracketed aside (VB-QA-21). It now matches a closed
+ * label vocabulary for the bracket and paren forms.
  */
 class TokenizerSymbolLossQaTest {
 
@@ -39,13 +39,17 @@ class TokenizerSymbolLossQaTest {
     // ------------------------------------------------------------- what survives
 
     @Test
-    fun `the recognized punctuation set has not silently widened`() {
-        // A canary: if somebody widens PUNCT_CHARS, the disabled tests below should
-        // be revisited rather than left rotting.
+    fun `the structural punctuation set has not silently changed`() {
+        // A canary over the characters later stages align on, collapse or attach.
+        // The probe is space-separated on purpose: punctuation with a word
+        // character on BOTH sides is intra-word ("a_b@c.com"), so "a.b" is one
+        // word rather than a Punct token.
         val survives = ".,!?;:\"&@#%()".toList().filter { ch ->
-            Tokenizer.tokenize("a${ch}b").any { it is Tok.Punct }
+            Tokenizer.tokenize("a $ch b").any { it is Tok.Punct }
         }
-        assertEquals(13, survives.size, "recognized punctuation changed: $survives")
+        assertEquals(13, survives.size, "structural punctuation changed: $survives")
+        // The intra-word rule, stated as an assertion rather than as a comment.
+        assertEquals(listOf<Tok>(Tok.Word("a.b")), Tokenizer.tokenize("a.b"))
     }
 
     @Test
@@ -58,44 +62,44 @@ class TokenizerSymbolLossQaTest {
     // -------------------------------------------------- VB-QA-13: symbol deletion
 
     /**
-     * Current behaviour, pinned. Every one of these is a silent content change the
-     * user never asked for; several change the *meaning* of the text.
+     * The family VB-QA-13 covers, now asserted the other way round: the policy is
+     * deny-list-drop, so a symbol the tokenizer has no opinion about is carried
+     * through inside the word instead of deleted.
      */
     @Test
-    fun `unrecognized symbols are deleted and split the surrounding word (pinned)`() {
-        val pinned = mapOf(
-            // currency: the amount survives, the unit does not
-            "it costs $75 dollars" to "It costs 75 dollars.",
-            "the cost is €40" to "The cost is 40.",
-            "£20 please now" to "20 please now.",
-            "¥300 yen total" to "300 yen total.",
-            "₹500 rupees now" to "500 rupees now.",
-            // mathematics: the operator vanishes, so the statement inverts or dissolves
-            "a + b = c" to "A b c.",
-            "5 * 3 equals" to "5 3 equals.",
-            "x^2 plus y" to "X 2 plus y.",
-            "the ± range" to "The range",
-            "temp is 20° today" to "Temp is 20 today.",
+    fun `symbols outside the structural set are carried through`() {
+        val cases = mapOf(
+            // currency: the amount and its unit both survive
+            "it costs $75 dollars" to "It costs $75 dollars.",
+            "the cost is €40" to "The cost is €40.",
+            "£20 please now" to "£20 please now.",
+            "¥300 yen total" to "¥300 yen total.",
+            "₹500 rupees now" to "₹500 rupees now.",
+            // mathematics: the operator is what carries the meaning
+            "a + b = c" to "A + b = c.",
+            "5 * 3 equals" to "5 * 3 equals.",
+            "x^2 plus y" to "X^2 plus y.",
+            "the ± range" to "The ± range.",
+            "temp is 20° today" to "Temp is 20° today.",
             // structure: fractions, paths, identifiers, code
-            "half is 1/2 cup" to "Half is 1 2 cup.",
-            "path\\to\\file here" to "Path to file here.",
-            "under_score name here" to "Under score name here.",
-            "C++ code here" to "C code here.",
-            "a|b|c here" to "A b c here.",
-            "less < more > than" to "Less more than.",
-            "star *bold* text" to "Star bold text.",
-            "back`tick here" to "Back tick here.",
+            "half is 1/2 cup" to "Half is 1/2 cup.",
+            "path\\to\\file here" to "Path\\to\\file here", // two words: no terminal period
+            "under_score name here" to "Under_score name here.",
+            "C++ code here" to "C++ code here.",
+            "a|b|c here" to "A|b|c here", // two words: no terminal period
+            "less < more > than" to "Less < more > than.",
+            "star *bold* text" to "Star *bold* text.",
+            "back`tick here" to "Back`tick here", // two words: no terminal period
             // an email address, which is the single most common thing dictated
             // into a text field after a phone number
-            "email me at a_b@c.com" to "Email me at a b @c. Com.",
+            "email me at a_b@c.com" to "Email me at a_b@c.com.",
         )
-        for ((input, expected) in pinned) {
+        for ((input, expected) in cases) {
             assertEquals(expected, clean(input), "changed for <$input>")
         }
     }
 
     @Test
-    @Disabled("VB-QA-13: Tokenizer drops every symbol outside PUNCT_CHARS (Tokens.kt:77) - currency, math and structural characters are deleted from the user's text")
     fun `symbols the user dictated should survive cleanup`() {
         assertEquals("It costs $75 dollars.", clean("it costs $75 dollars"))
         assertEquals("The cost is €40.", clean("the cost is €40"))
@@ -106,34 +110,36 @@ class TokenizerSymbolLossQaTest {
     }
 
     @Test
-    @Disabled("VB-QA-13: an unrecognized symbol also calls flushWord(), so it splits the word it sits inside instead of merely disappearing")
-    fun `deleting a symbol should not split the word around it`() {
-        // Even if the product decides symbols may be dropped, dropping one must not
-        // manufacture a word boundary that was never spoken.
-        assertEquals("Underscore.", clean("under_score"))
-        assertEquals("Ab.", clean("a¦b"))
+    fun `deleting a symbol does not split the word around it`() {
+        // Dropping a character must never manufacture a word boundary that was
+        // never spoken. Two halves to this now: symbols outside the deny-list are
+        // not dropped at all...
+        assertEquals("Under_score", clean("under_score"))
+        assertEquals("A¦b", clean("a¦b"))
+        // ...and the ones that ARE dropped are dropped in place, without flushing
+        // the word they sat inside.
+        assertEquals("Underscore", clean("under\u0000score"))
+        assertEquals("Ab", clean("a\uFFFDb"))
     }
 
     // ------------------------------------------- VB-QA-21: bracketed prose deleted
 
     @Test
-    fun `the ASR artifact scrubber removes any bracketed lowercase phrase (pinned)`() {
-        // Intended targets — correct.
+    fun `the ASR artifact scrubber matches a closed label vocabulary`() {
+        // Intended targets — still removed.
         assertEquals("Hello", clean("<unk> hello"))
         assertEquals("Hello there", clean("(noise) hello there"))
         assertEquals("Plays now", clean("[music] plays now"))
-        // Collateral damage: ordinary prose in brackets, gone without trace.
-        assertEquals("See for details.", clean("see [see attached] for details"))
-        assertEquals("The is here.", clean("the [box] is here"))
-        assertEquals("Meet me at later.", clean("meet me at [the park] later"))
-        assertEquals("Read now", clean("read [chapter one] now"))
-        // Anything with a digit inside escapes, which is the only reason
-        // "[b1]" survives. That is an accident, not a rule.
-        assertEquals("A b1 here.", clean("a [b1] here"))
+        assertEquals("Hello there", clean("[inaudible] hello there"))
+        // Ordinary prose in brackets is prose, not a recognizer label (VB-QA-21).
+        assertEquals("See [see attached] for details.", clean("see [see attached] for details"))
+        assertEquals("The [box] is here.", clean("the [box] is here"))
+        assertEquals("Meet me at [the park] later.", clean("meet me at [the park] later"))
+        assertEquals("Read [chapter one] now.", clean("read [chapter one] now"))
+        assertEquals("A [b1] here.", clean("a [b1] here"))
     }
 
     @Test
-    @Disabled("VB-QA-21: ARTIFACT_REGEX (TranscriptCleaner.kt:491) matches [a-z_ ]+ inside brackets, so an ordinary bracketed aside is deleted as if it were an ASR tag")
     fun `bracketed prose the user dictated should survive`() {
         assertEquals("See [see attached] for details.", clean("see [see attached] for details"))
         assertEquals("Meet me at [the park] later.", clean("meet me at [the park] later"))
