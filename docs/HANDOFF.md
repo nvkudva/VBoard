@@ -11,9 +11,14 @@ the merged `main` and carries one unmerged commit (decision records + README
 corrections). CI is green: core unit tests, Android debug build + lint + app
 tests, and the R8 release build.
 
-**Core suite: 761 tests, 0 failures, 29 skipped.** Every skip is a `@Disabled`
-test asserting spec-correct behaviour and naming the `VB-QA-NN` defect that
-blocks it. They are the executable spec for the work below — not coverage gaps.
+**Wave 1.5 Package A has landed** (uncommitted on that branch at the time of
+writing): the tokenizer now iterates code points under a deny-list, closing
+VB-QA-12, -13, -14, -15, -16, -17, -21 and -27.
+
+**Core suite: 761 tests, 0 failures, 18 skipped** (was 29 before Package A).
+Every skip is a `@Disabled` test asserting spec-correct behaviour and naming the
+`VB-QA-NN` defect that blocks it. They are the executable spec for the work
+below — not coverage gaps.
 
 ## What to build, in order
 
@@ -22,34 +27,45 @@ Read [`docs/V2_PLAN.md`](V2_PLAN.md) §3 for the waves and
 constraints and definitions of done. The ruling is **bugs first, features
 later**, so:
 
-1. **Wave 1.5, Package A — Unicode-safe text core.** Start here.
-2. Wave 1.5 Packages B and C (concurrent with each other, after A).
+1. ~~**Wave 1.5, Package A — Unicode-safe text core.**~~ ✅ done.
+2. **Wave 1.5 Packages B and C** — start here; safe to run concurrently.
 3. Wave 0.5 — move the LLM refiner out of the keyboard process (decided).
 4. Wave 0 items, then Wave 1.
 
-### Package A in one paragraph
+### Package A in one paragraph — what it was, and what landed
 
-`core/src/main/kotlin/com/vboard/core/text/Tokens.kt` iterates UTF-16 `Char`s and
-keeps a character only when `Char.isLetterOrDigit()` is true or it appears in a
-13-character punctuation allow-list. The `else` branch calls `flushWord()`, so an
-unrecognized character is not merely deleted — it also inserts a word boundary,
-splitting the word it sat inside. This destroys 88,833 of 138,552 named Unicode
+`core/src/main/kotlin/com/vboard/core/text/Tokens.kt` iterated UTF-16 `Char`s and
+kept a character only when `Char.isLetterOrDigit()` was true or it appeared in a
+13-character punctuation allow-list. The `else` branch called `flushWord()`, so an
+unrecognized character was not merely deleted — it also inserted a word boundary,
+splitting the word it sat inside. That destroyed 88,833 of 138,552 named Unicode
 code points (64%): every emoji, every combining mark, every currency and math
-symbol. Devanagari and Thai become unwritable, and NFD `café` de-accents while
-its NFC twin survives, so output depends on a normalization form no ASR engine
+symbol. Devanagari and Thai were unwritable, and NFD `café` de-accented while its
+NFC twin survived, so output depended on a normalization form no ASR engine
 guarantees.
 
-**Do not fix this by widening the allow-list.** That would have to enumerate 63
-currency signs, 948 math symbols and 24 dashes and still leave combining marks
-and the entire astral plane broken. The change that works is a policy inversion:
-**iterate code points, and go from allow-list-keep to deny-list-drop**, where the
-deny-list is only the small closed set of ASR artifacts. That closes VB-QA-13,
--14, -15, -16, -17 and -21 together.
+**The fix was not a wider allow-list** — that would have to enumerate 63 currency
+signs, 948 math symbols and 24 dashes and still leave combining marks and the
+entire astral plane broken. It was a policy inversion: **iterate code points, and
+go from allow-list-keep to deny-list-drop**, where the deny-list is only the small
+closed set of ASR artifacts (Cc/Cs/Cn plus BOM and U+FFFD). All 11 `@Disabled`
+tests are enabled and green; `CleanupInvariantQaTest` is still green, which is the
+guard against a fix that preserves *too much*.
 
-Done when the 11 `@Disabled` tests pass with the annotation removed, the golden
-corpus's 44 cases are unchanged, and `CleanupInvariantQaTest` is still green —
-that last one is the guard against a fix that preserves *too much* and breaks
-output hygiene.
+Three things a reader should know about how it landed:
+
+- **The golden corpus has 53 cases plus 5 standalone regression tests** (58 tests
+  in `CleanupGoldenCorpusTest`), not 44 — the "44" in earlier drafts of this
+  document and of `QA_REPORT.md` was stale. Exactly one case changed:
+  `that jacket costs $75` now keeps its `$`, which *is* the VB-QA-12 fix.
+- **`sentenceStartsAt` was taken by Package A**, not deferred to B, because
+  VB-QA-27's test sits in `UnicodeSafetyQaTest`. Package B inherits it fixed.
+  A straight `'` is deliberately *not* a sentence closer — it is ambiguous with a
+  word-final apostrophe.
+- **Two additions beyond the plan.** The non-raw path normalizes to NFC (raw mode
+  is exempt — normalization is itself a transformation); and structural
+  punctuation with a word character on both sides is treated as intra-word, so
+  `a_b@c.com` and `well-known` stay one word.
 
 ## Two defects that jump the queue if beta ships first
 
@@ -84,7 +100,10 @@ audit.
 ## Fixes already made that must not regress
 
 `QaRegressionPinTest` asserts one test per VB-QA-01…12 and will fail loudly if
-any of these come back:
+any of these come back. Note that its VB-QA-12 pin originally asserted the
+*unfixed* state (the `$` still being dropped); Package A flipped it to assert
+`That jacket costs $75.` — a pin that pins an open defect must be flipped, not
+deleted, when the defect is closed.
 
 - Number-like words are exempt from repetition collapse, so dictated phone
   numbers survive (VB-QA-01).

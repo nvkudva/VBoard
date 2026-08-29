@@ -6,7 +6,6 @@ import com.vboard.core.text.FieldKind
 import com.vboard.core.text.TranscriptCleaner
 import com.vboard.core.text.UtteranceCommand
 import java.text.Normalizer
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -17,15 +16,18 @@ import kotlin.test.assertTrue
  * *"Raw transcript escape hatch: bypasses every transformation EXCEPT spoken
  * commands and whole-utterance commands"*.
  *
- * It does not. `TranscriptCleaner.clean` runs `Tokenizer.tokenize` before it
- * looks at `rawMode` at all (`TranscriptCleaner.kt:23`), and then re-renders
- * through `Tokenizer.render`. So raw mode inherits every deletion the tokenizer
- * performs — emoji, unrecognized symbols, combining marks — plus render-level
- * respacing, plus `capitalizeStandaloneI`.
+ * It did not. `TranscriptCleaner.clean` runs `Tokenizer.tokenize` before it looks
+ * at `rawMode` at all, and then re-renders through `Tokenizer.render`, so raw mode
+ * inherited every deletion the tokenizer performed — emoji, unrecognized symbols,
+ * combining marks (VB-QA-17).
  *
- * VB-QA-04 recorded part of this as a comment in `CleanupPropertyTest`. This file
- * turns it into assertions, because "the escape hatch also loses your content" is
- * a different severity from "the escape hatch capitalizes I".
+ * Package A closed that as a consequence of the tokenizer inversion rather than by
+ * special-casing raw mode: once the tokenizer stops deleting content, the escape
+ * hatch stops leaking it. Raw mode is additionally exempt from the NFC pass, since
+ * normalization is itself a transformation.
+ *
+ * Two transformations of its own remain, and are still asserted below: render-level
+ * respacing plus quote folding, and `capitalizeStandaloneI` (VB-QA-04).
  */
 class RawModeFidelityQaTest {
 
@@ -58,15 +60,21 @@ class RawModeFidelityQaTest {
     // -------------------------------------------- VB-QA-17: raw mode is not verbatim
 
     @Test
-    fun `raw mode still deletes content the tokenizer does not recognize (pinned)`() {
-        // The escape hatch loses exactly what the user turned it on to protect.
-        assertEquals("hello", raw("hello 👋").text)
-        assertEquals("75", raw("$75").text)
-        assertEquals("cafe", raw(Normalizer.normalize("café", Normalizer.Form.NFD)).text)
-        assertEquals("a b", raw("a‍b").text)
-        assertEquals("under score", raw("under_score").text)
-        assertEquals("a b c", raw("a + b = c").text)
-        assertEquals("see for details", raw("see [see attached] for details").text)
+    fun `raw mode keeps the content the user turned it on to protect`() {
+        // Every one of these used to be silently deleted by the tokenizer that runs
+        // before rawMode is consulted (VB-QA-17).
+        assertEquals("hello 👋", raw("hello 👋").text)
+        assertEquals("$75", raw("$75").text)
+        assertEquals("a‍b", raw("a‍b").text)
+        assertEquals("under_score", raw("under_score").text)
+        assertEquals("a + b = c", raw("a + b = c").text)
+        assertEquals("see [see attached] for details", raw("see [see attached] for details").text)
+        // Raw mode is also exempt from the NFC normalization the other modes apply,
+        // because NFC is itself a transformation.
+        assertEquals(
+            Normalizer.normalize("café", Normalizer.Form.NFD),
+            raw(Normalizer.normalize("café", Normalizer.Form.NFD)).text,
+        )
         // ...and it still applies two transformations of its own.
         assertEquals("I think I'm ok", raw("i think i'm ok").text)   // VB-QA-04
         assertEquals("hello world", raw("hello    world").text)      // respacing
@@ -74,7 +82,6 @@ class RawModeFidelityQaTest {
     }
 
     @Test
-    @Disabled("VB-QA-17: rawMode is checked after Tokenizer.tokenize has already run, so the documented 'bypasses every transformation' escape hatch still deletes emoji, unrecognized symbols and combining marks")
     fun `raw mode should return the transcript verbatim`() {
         for (input in listOf("hello 👋", "$75", "under_score", "a + b = c", "see [see attached] for details")) {
             assertEquals(input, raw(input).text, "raw mode altered <$input>")
@@ -86,7 +93,6 @@ class RawModeFidelityQaTest {
     }
 
     @Test
-    @Disabled("VB-QA-17: raw mode should be a superset of every other mode's output; today it can be strictly lossier than a normal clean for the same input")
     fun `raw mode never loses a character that normal cleanup keeps`() {
         val normal = CleanupOptions()
         for (input in listOf("hello 👋 world", "$75 for it", "a + b = c", "café is open")) {

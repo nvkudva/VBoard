@@ -113,11 +113,13 @@ lose the user's words outright and two cross a privacy boundary we stated public
 
 | # | Item | Closes | Owns | Size |
 |---|---|---|---|---|
-| W1.5.1 | **Package A — Unicode-safe text core** | VB-QA-12, -13, -14, -15, -16, -17, -21 | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` + its call site only), `Cleanup.kt` | M |
-| W1.5.2 | **Package B — Destructive-stage confidence + field-kind honesty** | VB-QA-18, -19, -20, -29, gap G3 | `core/text/TranscriptCleaner.kt` (stages 2/3/5, `sentenceStartsAt`, `capitalize`), `FieldKind.kt`, `Cleanup.kt` | M |
+| W1.5.1 | **Package A — Unicode-safe text core** ✅ landed | VB-QA-12, -13, -14, -15, -16, -17, -21, **-27** | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` + its call site only), `Cleanup.kt` | M |
+| W1.5.2 | **Package B — Destructive-stage confidence + field-kind honesty** | VB-QA-18, -19, -20, -29, gap G3 | `core/text/TranscriptCleaner.kt` (stages 2/3/5, `capitalize`), `FieldKind.kt`, `Cleanup.kt` | M |
 | W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** | VB-QA-22, -23, -24, -25, -26, -28, -32 | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt` | M |
 
-**28 `@Disabled` tests are already written and waiting.** Each names the `VB-QA-NN` it is
+**28 `@Disabled` tests were written and waiting; Package A has since enabled 11 of
+them, leaving 17 across B and C** (18 skips total in `:core`, one of which is
+VB-QA-05 and outside this wave). Each names the `VB-QA-NN` it is
 blocked on; each package's definition of done is "these specific tests pass with the
 annotation removed, and the invariant suites stay green". That last clause is the real
 gate — `CleanupInvariantQaTest` and the clipboard retention fuzz exist to catch a fix that

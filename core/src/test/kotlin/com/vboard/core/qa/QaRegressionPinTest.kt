@@ -202,11 +202,11 @@ class QaRegressionPinTest {
     }
 
     @Test
-    fun `VB-QA-12 the dollar sign is still dropped - see TokenizerSymbolLossQaTest`() {
-        // Open. The spec-correct assertion is the @Disabled test in
-        // CleanupGoldenCorpusTest; the sibling symbols are in
-        // TokenizerSymbolLossQaTest.
-        assertEquals("That jacket costs 75.", clean("that jacket costs $75").text)
+    fun `VB-QA-12 a dictated currency symbol survives cleanup`() {
+        // Fixed by Package A: the tokenizer iterates code points and drops only a
+        // closed deny-list of ASR artifacts, so '$' is no longer an unknown symbol.
+        // The sibling symbols are in TokenizerSymbolLossQaTest.
+        assertEquals("That jacket costs $75.", clean("that jacket costs $75").text)
     }
 
     // ------------------------------------------------------- report completeness

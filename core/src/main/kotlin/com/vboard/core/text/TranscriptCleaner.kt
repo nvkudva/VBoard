@@ -20,7 +20,15 @@ class TranscriptCleaner {
 
     fun clean(request: CleanupRequest): CleanupResult {
         val options = request.options
-        var tokens = Tokenizer.tokenize(scrubArtifacts(request.transcript))
+        // Normalize to NFC so cleanup does not depend on which normalization form
+        // the recognizer happened to emit (VB-QA-15). Raw mode is exempt: it is the
+        // verbatim escape hatch, and NFC is still a transformation.
+        val source = if (options.rawMode) {
+            request.transcript
+        } else {
+            java.text.Normalizer.normalize(request.transcript, java.text.Normalizer.Form.NFC)
+        }
+        var tokens = Tokenizer.tokenize(scrubArtifacts(source))
         if (tokens.isEmpty()) return CleanupResult("")
 
         detectUtteranceCommand(tokens)?.let { return CleanupResult("", command = it) }
@@ -449,8 +457,17 @@ class TranscriptCleaner {
         // the sentence after a spoken "new line" uncapitalized.
         val trimmed = precedingText.trimEnd(' ', '\t')
         if (trimmed.isEmpty()) return true
-        val last = trimmed.last()
-        return last == '.' || last == '!' || last == '?' || last == '\n'
+        // A terminator may be followed by closing punctuation — the "end of a quoted
+        // sentence" shape is extremely common — so skip those before looking (VB-QA-27).
+        var end = trimmed.length
+        while (end > 0) {
+            val cp = trimmed.codePointBefore(end)
+            if (cp !in SENTENCE_CLOSERS) break
+            end -= Character.charCount(cp)
+        }
+        if (end == 0) return true
+        val last = trimmed.codePointBefore(end)
+        return last in SENTENCE_TERMINATORS || last == '\n'.code
     }
 
     private fun capitalize(tokens: MutableList<Tok>, capitalizeFirst: Boolean) {
@@ -488,7 +505,21 @@ class TranscriptCleaner {
         isNotEmpty() && (all { it.isDigit() } || lowercase() in NUMBER_WORDS)
 
     companion object {
-        private val ARTIFACT_REGEX = Regex("""<[a-z_]+>|\[[a-z_ ]+]|\((?:noise|music|laughter)\)""", RegexOption.IGNORE_CASE)
+        /**
+         * ASR junk tags. Angle brackets are unambiguous — no user dictates "<unk>" —
+         * so any tag shape is scrubbed there. Square brackets and parentheses are
+         * ordinary prose the user does dictate, so those two forms match a closed
+         * vocabulary of recognizer labels only; matching "any lowercase word in
+         * brackets" deleted bracketed asides outright (VB-QA-21).
+         */
+        private val ARTIFACT_LABELS =
+            "unk|music|noise|laughter|laugh|applause|silence|inaudible|unintelligible|" +
+                "blank_audio|no_speech|non_speech|sound|speaking|background"
+
+        private val ARTIFACT_REGEX = Regex(
+            """<[a-z_]+>|\[(?:$ARTIFACT_LABELS)]|\((?:$ARTIFACT_LABELS)\)""",
+            RegexOption.IGNORE_CASE,
+        )
 
         private val HESITATIONS = setOf(
             "um", "uh", "uhm", "umm", "uhh", "erm", "er", "mmm", "mm", "hmm", "mhm",
@@ -504,6 +535,17 @@ class TranscriptCleaner {
         )
 
         private val SENTENCE_ENDERS = setOf(".", "!", "?")
+
+        /**
+         * Sentence terminators across the writing systems VBoard claims to support.
+         * A straight apostrophe is deliberately absent from [SENTENCE_CLOSERS]: it is
+         * ambiguous with a word-final apostrophe and is not reliably a closing quote.
+         */
+        private val SENTENCE_TERMINATORS: Set<Int> =
+            ".!?\u2026\u3002\uFF01\uFF1F\u061F\u0964\u0965\u203D\uFF0E".map { it.code }.toSet()
+
+        private val SENTENCE_CLOSERS: Set<Int> =
+            "\")]}\u00BB\u2019\u201D\u300D\u300F\uFF09".map { it.code }.toSet()
 
         private val I_CONTRACTIONS = setOf("i'm", "i'll", "i've", "i'd")
 
