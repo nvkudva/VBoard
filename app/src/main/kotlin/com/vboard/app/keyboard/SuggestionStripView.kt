@@ -21,8 +21,11 @@ class SuggestionStripView(
     private var theme: KeyboardTheme,
 ) : View(context) {
 
-    fun interface Listener {
+    interface Listener {
         fun onSuggestionPicked(suggestion: Suggestion)
+
+        /** The clipboard chip in the left slot was tapped. */
+        fun onClipboardChipPicked()
     }
 
     var listener: Listener? = null
@@ -31,6 +34,13 @@ class SuggestionStripView(
     private var slots: List<Suggestion?> = listOf(null, null, null)
     private var autocorrectInCenter = false
     private var pressedSlot = -1
+
+    /**
+     * Preview of a just-copied clip, shown in the left slot. Non-null only when
+     * the host has confirmed there is no composing text: the typed literal must
+     * always stay reachable in the strip, so the chip may never displace it.
+     */
+    private var clipboardChip: String? = null
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
@@ -61,6 +71,17 @@ class SuggestionStripView(
         invalidate()
     }
 
+    /**
+     * Shows (or with null, hides) the clipboard chip. The host only passes text
+     * here when nothing is composing, so this never costs the user a slot that
+     * would otherwise hold their literal input.
+     */
+    fun setClipboardChip(preview: String?) {
+        if (clipboardChip == preview) return
+        clipboardChip = preview
+        invalidate()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         setMeasuredDimension(
             MeasureSpec.getSize(widthMeasureSpec),
@@ -75,7 +96,12 @@ class SuggestionStripView(
         canvas.drawLine(slotW, dp(10f), slotW, height - dp(10f), dividerPaint)
         canvas.drawLine(2 * slotW, dp(10f), 2 * slotW, height - dp(10f), dividerPaint)
 
+        clipboardChip?.let { preview ->
+            drawChip(canvas, preview, slotW)
+        }
+
         for (i in 0..2) {
+            if (i == 0 && clipboardChip != null) continue
             val suggestion = slots[i] ?: continue
             if (i == pressedSlot) {
                 pressPaint.color = theme.keyPressed.withAlphaFraction(0.6f)
@@ -99,6 +125,28 @@ class SuggestionStripView(
         }
     }
 
+    /**
+     * Paperclip glyph plus a short preview, drawn as a filled pill so it reads
+     * as a different kind of thing from the word suggestions beside it.
+     */
+    private fun drawChip(canvas: Canvas, preview: String, slotW: Float) {
+        if (pressedSlot == 0) {
+            pressPaint.color = theme.keyPressed.withAlphaFraction(0.6f)
+        } else {
+            pressPaint.color = theme.keySurface.withAlphaFraction(if (theme.isDark) 0.7f else 1f)
+        }
+        canvas.drawRoundRect(
+            dp(6f), dp(6f), slotW - dp(6f), height - dp(6f), dp(14f), dp(14f), pressPaint,
+        )
+
+        textPaint.typeface = Typeface.SANS_SERIF
+        textPaint.color = theme.suggestionText
+        val glyphWidth = textPaint.measureText(CLIP_GLYPH) + dp(4f)
+        val available = slotW - dp(24f) - glyphWidth
+        val label = CLIP_GLYPH + " " + ellipsize(preview.take(CHIP_PREVIEW_CHARS), available)
+        canvas.drawText(label, slotW / 2, height / 2f + textPaint.textSize / 3, textPaint)
+    }
+
     private fun ellipsize(text: String, maxWidth: Float): String {
         if (textPaint.measureText(text) <= maxWidth) return text
         var t = text
@@ -112,7 +160,7 @@ class SuggestionStripView(
         val slot = (event.x / (width / 3f)).toInt().coerceIn(0, 2)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (slots[slot] != null) {
+                if (slot == 0 && clipboardChip != null || slots[slot] != null) {
                     pressedSlot = slot
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     invalidate()
@@ -120,10 +168,15 @@ class SuggestionStripView(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                val picked = slots.getOrNull(pressedSlot)
+                val wasPressed = pressedSlot
+                val picked = slots.getOrNull(wasPressed)
                 pressedSlot = -1
                 invalidate()
-                picked?.let { listener?.onSuggestionPicked(it) }
+                if (wasPressed == 0 && clipboardChip != null) {
+                    listener?.onClipboardChipPicked()
+                } else {
+                    picked?.let { listener?.onSuggestionPicked(it) }
+                }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -133,5 +186,13 @@ class SuggestionStripView(
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private companion object {
+        /** U+1F4CE PAPERCLIP. Rendered by the system emoji font. */
+        const val CLIP_GLYPH = "\uD83D\uDCCE"
+
+        /** Roughly one strip slot's worth before ellipsizing takes over. */
+        const val CHIP_PREVIEW_CHARS = 18
     }
 }

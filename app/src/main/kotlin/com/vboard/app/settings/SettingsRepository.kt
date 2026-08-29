@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vboard.app.keyboard.ThemeMode
@@ -28,6 +29,17 @@ data class SettingsSnapshot(
     val doubleSpacePeriod: Boolean = true,
     val autocorrectMode: AutocorrectMode = AutocorrectMode.CONSERVATIVE,
     val suggestionsEnabled: Boolean = true,
+    val numberRowEnabled: Boolean = false,
+    // Clipboard
+    val clipboardHistoryEnabled: Boolean = true,
+    val clipboardSuggestionsEnabled: Boolean = true,
+    /**
+     * When the user last asked for the whole clip history to be deleted. The
+     * settings screen and the IME live in one process but not one object graph,
+     * so this timestamp is how "delete all" reaches a keyboard that is already
+     * running: the IME watches it change and drops what it holds in memory.
+     */
+    val clipboardClearedAt: Long = 0L,
     // Voice
     val removeFillers: Boolean = true,
     val aggressiveFillers: Boolean = false,
@@ -66,6 +78,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         val DOUBLE_SPACE = booleanPreferencesKey("double_space_period")
         val AUTOCORRECT = stringPreferencesKey("autocorrect_mode")
         val SUGGESTIONS = booleanPreferencesKey("suggestions")
+        val NUMBER_ROW = booleanPreferencesKey("number_row")
+        val CLIPBOARD_HISTORY = booleanPreferencesKey("clipboard_history")
+        val CLIPBOARD_SUGGESTIONS = booleanPreferencesKey("clipboard_suggestions")
+        val CLIPBOARD_CLEARED_AT = longPreferencesKey("clipboard_cleared_at")
         val FILLERS = booleanPreferencesKey("remove_fillers")
         val FILLERS_AGGRESSIVE = booleanPreferencesKey("aggressive_fillers")
         val SELF_CORRECT = booleanPreferencesKey("self_corrections")
@@ -90,6 +106,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         doubleSpacePeriod = this[Keys.DOUBLE_SPACE] ?: true,
         autocorrectMode = enumOrDefault(this[Keys.AUTOCORRECT], AutocorrectMode.CONSERVATIVE),
         suggestionsEnabled = this[Keys.SUGGESTIONS] ?: true,
+        numberRowEnabled = this[Keys.NUMBER_ROW] ?: false,
+        clipboardHistoryEnabled = this[Keys.CLIPBOARD_HISTORY] ?: true,
+        clipboardSuggestionsEnabled = this[Keys.CLIPBOARD_SUGGESTIONS] ?: true,
+        clipboardClearedAt = this[Keys.CLIPBOARD_CLEARED_AT] ?: 0L,
         removeFillers = this[Keys.FILLERS] ?: true,
         aggressiveFillers = this[Keys.FILLERS_AGGRESSIVE] ?: false,
         resolveSelfCorrections = this[Keys.SELF_CORRECT] ?: true,
@@ -107,6 +127,10 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
     }
 
     suspend fun setString(key: Preferences.Key<String>, value: String) {
+        dataStore.edit { it[key] = value }
+    }
+
+    suspend fun setLong(key: Preferences.Key<Long>, value: Long) {
         dataStore.edit { it[key] = value }
     }
 }

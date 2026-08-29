@@ -12,8 +12,7 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.abs
-import kotlin.math.min
+import com.vboard.core.keyboard.KeyboardHeights
 
 /**
  * Custom-drawn keyboard (all layers except emoji). One view draws every key:
@@ -132,18 +131,23 @@ class KeyboardView(
         invalidate()
     }
 
+    /**
+     * Row height for the current layout. Five-row layouts (the number row is on)
+     * are scaled down by [KeyboardHeights.COMPACT_ROW_FACTOR] so the extra row
+     * costs under 40dp of keyboard rather than a whole row's worth.
+     */
     val rowHeightPx: Float
         get() {
             val screenHeightDp = resources.configuration.screenHeightDp.toFloat()
             val landscape = resources.configuration.orientation ==
                 android.content.res.Configuration.ORIENTATION_LANDSCAPE
-            val dpValue = if (landscape) {
+            val baseDp = if (landscape) {
                 KeyboardMetrics.ROW_HEIGHT_LANDSCAPE_DP
             } else {
                 (screenHeightDp * KeyboardMetrics.ROW_HEIGHT_FRACTION)
                     .coerceIn(KeyboardMetrics.ROW_HEIGHT_MIN_DP, KeyboardMetrics.ROW_HEIGHT_MAX_DP)
             }
-            return dp(dpValue)
+            return dp(KeyboardHeights.rowHeightDp(baseDp, layout.rows.size))
         }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -254,11 +258,11 @@ class KeyboardView(
         else -> key.icon
     }
 
-    private fun layoutIsSymbols(): Boolean = layout !== KeyboardLayouts.LETTERS
+    private fun layoutIsSymbols(): Boolean = layout.layer != KeyboardLayer.LETTERS
 
     private fun displayLabel(key: Key): String {
         val label = key.label
-        return if (shiftState != ShiftState.OFF && layout === KeyboardLayouts.LETTERS) {
+        return if (shiftState != ShiftState.OFF && layout.layer == KeyboardLayer.LETTERS) {
             label.uppercase()
         } else {
             label
@@ -384,7 +388,9 @@ class KeyboardView(
                         spaceDragging = false
                         handler2.postDelayed(longPressRunnable, LONG_PRESS_MS)
                     }
-                    kb.key.longPress.isNotEmpty() || kb.key.action == KeyAction.Mic ->
+                    kb.key.longPress.isNotEmpty() ||
+                        kb.key.longPressAction != null ||
+                        kb.key.action == KeyAction.Mic ->
                         handler2.postDelayed(longPressRunnable, LONG_PRESS_MS)
                 }
                 return true
@@ -493,14 +499,22 @@ class KeyboardView(
     private fun onLongPress() {
         val kb = pressedKey ?: return
         longPressFired = true
+        val heldAction = kb.key.longPressAction
         when {
             kb.key.action == KeyAction.Mic -> listener?.onKeyAction(KeyAction.Mic, false)
             kb.key.action == KeyAction.Space -> {
                 // Long-press space: no-op for v1 (reserved for IME switcher).
             }
+            // A held key with its own action (?123 -> clipboard) fires it instead
+            // of opening a candidate popup.
+            heldAction != null -> {
+                dismissPopup()
+                if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                listener?.onKeyAction(heldAction, false)
+            }
             kb.key.longPress.isNotEmpty() -> {
                 dismissPopup()
-                val candidates = if (shiftState != ShiftState.OFF && layout === KeyboardLayouts.LETTERS) {
+                val candidates = if (shiftState != ShiftState.OFF && layout.layer == KeyboardLayer.LETTERS) {
                     kb.key.longPress.map { it.uppercase() }
                 } else {
                     kb.key.longPress

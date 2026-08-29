@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -13,6 +14,8 @@ import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.vboard.app.VBoardApp
+import com.vboard.app.clipboard.ClipboardRepository
+import com.vboard.app.keyboard.ClipboardPanelView
 import com.vboard.app.keyboard.EmojiPanelView
 import com.vboard.app.keyboard.KeyAction
 import com.vboard.app.keyboard.KeyIcon
@@ -26,6 +29,8 @@ import com.vboard.app.onboarding.OnboardingActivity
 import com.vboard.app.settings.SettingsSnapshot
 import com.vboard.app.voice.VoiceBarView
 import com.vboard.app.voice.VoiceSessionController
+import com.vboard.core.clipboard.ClipEntry
+import com.vboard.core.clipboard.PinResult
 import com.vboard.core.suggest.Suggestion
 import com.vboard.core.suggest.SuggestionRequest
 import com.vboard.core.suggest.SuggestionResult
@@ -36,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,8 +57,14 @@ class VBoardImeService : InputMethodService() {
     private lateinit var contentFrame: FrameLayout
     private lateinit var keyboardView: KeyboardView
     private var emojiPanel: EmojiPanelView? = null
+    private var clipboardPanel: ClipboardPanelView? = null
     private var voiceBar: VoiceBarView? = null
     private var voiceController: VoiceSessionController? = null
+
+    private lateinit var clipboard: ClipboardRepository
+
+    /** Closes the strip chip when its 60-second window runs out on its own. */
+    private var chipExpiryJob: Job? = null
 
     private var theme: KeyboardTheme = KeyboardTheme.LIGHT
     private var profile: EditorProfile = EditorProfile.from(null)
@@ -73,6 +85,11 @@ class VBoardImeService : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        // Saves outlive this service: the debounce would otherwise drop the last
+        // one when the keyboard is torn down, which is exactly when it matters.
+        clipboard = ClipboardRepository(this, serviceScope, app.appScope).apply {
+            changeListener = ClipboardRepository.ChangeListener { onClipsChanged() }
+        }
         serviceScope.launch {
             app.settings.snapshot.collect { applySettings(it) }
         }
@@ -80,6 +97,7 @@ class VBoardImeService : InputMethodService() {
 
     override fun onDestroy() {
         voiceController?.destroy()
+        clipboard.onDestroy()
         serviceScope.cancel()
         super.onDestroy()
     }
