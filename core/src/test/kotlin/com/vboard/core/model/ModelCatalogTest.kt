@@ -52,15 +52,32 @@ class ModelCatalogTest {
     }
 
     @Test
-    fun `placeholder hashes are empty and sizes sum into totalBytes`() {
+    fun `pinned hashes are well formed and sizes sum into totalBytes`() {
         for (pack in ModelCatalog.packs) {
             assertEquals(1, pack.version)
             assertTrue(pack.files.isNotEmpty())
             for (file in pack.files) {
-                assertEquals("", file.sha256)
+                // Empty means "skip verification"; anything else must be a real digest,
+                // because a malformed hash would fail every install rather than none.
+                if (file.sha256.isNotEmpty()) {
+                    assertEquals(64, file.sha256.length, "${file.relativePath} sha256 length")
+                    assertTrue(
+                        file.sha256.all { it in "0123456789abcdef" },
+                        "${file.relativePath} sha256 must be lowercase hex",
+                    )
+                }
                 assertTrue(file.sizeBytes > 0)
             }
             assertEquals(pack.files.sumOf { it.sizeBytes }, pack.totalBytes)
+        }
+        // Both speech packs are pinned to digests measured from the upstream assets, so a
+        // corrupted-but-complete download can no longer install. The refiner stays
+        // unpinned until its host can be hashed from the release pipeline.
+        for (id in listOf("zipformer-en-streaming", "parakeet-tdt-0.6b-v2")) {
+            assertTrue(
+                ModelCatalog.byId(id)!!.files.all { it.sha256.isNotEmpty() },
+                "$id must ship a pinned digest",
+            )
         }
         // Sizes measured from the upstream release assets; the installer re-checks with
         // the server, so drift here only affects progress and the storage pre-check.

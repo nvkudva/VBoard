@@ -66,7 +66,7 @@ object ModelCatalog {
                 ModelFileSpec(
                     relativePath = "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
                     url = "$SHERPA_RELEASE_BASE/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
-                    sha256 = "",
+                    sha256 = "9c559283e8498d3fe95913c79ca1cb454bb26281ac2b102b41306c7d752765d9",
                     sizeBytes = 127_887_156L, // measured from the release asset
                     archive = true,
                 ),
@@ -83,7 +83,7 @@ object ModelCatalog {
                 ModelFileSpec(
                     relativePath = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
                     url = "$SHERPA_RELEASE_BASE/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-                    sha256 = "",
+                    sha256 = "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
                     sizeBytes = 482_468_385L, // measured from the release asset
                     archive = true,
                 ),
