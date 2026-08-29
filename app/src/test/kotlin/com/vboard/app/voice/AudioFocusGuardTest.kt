@@ -13,11 +13,11 @@ import org.robolectric.RobolectricTestRunner
 /**
  * VB-123, the half of it that can be checked without a phone ringing.
  *
- * Part of the first Android-layer test source set in this project; see the
- * "unit tests" section at the end of app/build.gradle.kts for why a JUnit 4
- * runner works in a JUnit Platform module. Robolectric gives a real AudioManager
- * backed by a shadow, so focus requests and the audio mode behave like the
- * framework rather than like a mock written to match our own assumptions.
+ * See the "unit tests" section at the end of app/build.gradle.kts for why a
+ * JUnit 4 runner works in a JUnit Platform module. Robolectric gives a real
+ * AudioManager backed by a shadow, so focus requests and the audio mode behave
+ * like the framework rather than like a mock written to match our own
+ * assumptions.
  */
 @RunWith(RobolectricTestRunner::class)
 class AudioFocusGuardTest {

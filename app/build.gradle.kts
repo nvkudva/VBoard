@@ -109,9 +109,10 @@ tasks.withType<Test> {
 }
 
 // ------------------------------------------------------------------ unit tests
-// Bootstrap of the first JVM test source set in :app (app/src/test). Robolectric
-// and Espresso were already declared but nothing had ever been compiled against
-// them, so the wiring below is what makes `:app:testDebugUnitTest` actually run.
+// Bootstrap of the JVM test source set in :app (app/src/test). Robolectric and
+// Espresso were already declared, but nothing had ever been compiled against
+// them and there was no test wiring at all; the block below is what makes
+// `:app:testDebugUnitTest` actually run, for every test in the source set.
 //
 // Two engines on purpose: this module runs the JUnit Platform (junit-jupiter),
 // while Robolectric is a JUnit 4 runner and cannot be driven by Jupiter. The
