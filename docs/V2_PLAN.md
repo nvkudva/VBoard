@@ -1,6 +1,7 @@
 # VBoard V2 Plan
 
-Status: **proposed, not approved. Nothing here is being built.**
+Status: **approved and partly built.** Wave 1.5 (§3) has landed in full; nothing
+else in this plan has started. Wave 0.5 is the next item.
 Date: 2026-08-29 · Sources: product, design, engineering-management and performance
 reviews, plus two rounds of recorded debate between product and design.
 
@@ -17,8 +18,7 @@ Companion documents:
 
 This is a V2 roadmap written before V1 has met a single person outside the repo. At the
 time of writing: the strip/toolbar unification is not built, the AI-fix toolbar is
-implemented but not mounted, the text core destroys 64% of Unicode
-([QA_REPORT.md §3.1](QA_REPORT.md)), and there is no telemetry — which means the metric
+implemented but not mounted, and there is no telemetry — which means the metric
 product and design agreed to steer by **cannot be computed today**. Adopting a metric we
 cannot measure is how roadmaps become fiction.
 
@@ -115,12 +115,13 @@ lose the user's words outright and two cross a privacy boundary we stated public
 |---|---|---|---|---|
 | W1.5.1 | **Package A — Unicode-safe text core** ✅ landed | VB-QA-12, -13, -14, -15, -16, -17, -21, **-27** | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` + its call site only), `Cleanup.kt` | M |
 | W1.5.2 | **Package B — Destructive-stage confidence + field-kind honesty** ✅ landed | VB-QA-18, -19, -20, -29, **-30**, **-31**, gap G3 | `core/text/TranscriptCleaner.kt` (stages 2/3/5, `capitalize`), `FieldKind.kt`, `Cleanup.kt` | M |
-| W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** | VB-QA-22, -23, -24, -25, -26, -28, -32 | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt` | M |
+| W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** ✅ landed | VB-QA-22, -23, -24, -25, -26, -28, -32, **-33, -34** | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt`, `core/correct/ContentGuard.kt` | M |
 
-**28 `@Disabled` tests were written and waiting; Package A enabled 11 of them and
-Package B a further 7, leaving 10 for Package C** (11 skips total in `:core`, the
-eleventh being VB-QA-05's `CleanupPropertyTest` case, which is outside this
-wave). Each names the `VB-QA-NN` it is
+**Wave 1.5 is complete.** 28 `@Disabled` tests were written and waiting: Package
+A enabled 11, Package B 7 and Package C 10, which is all of them. The core suite
+on the merged branch is **762 tests, 0 failures, 1 skipped** — the one skip is
+`CleanupPropertyTest`'s VB-QA-05 case, which was never part of this wave. Each
+disabled test named the `VB-QA-NN` it was
 blocked on; each package's definition of done is "these specific tests pass with the
 annotation removed, and the invariant suites stay green". That last clause is the real
 gate — `CleanupInvariantQaTest` and the clipboard retention fuzz exist to catch a fix that
@@ -128,31 +129,45 @@ overshoots, and a package that closes its own tests while breaking theirs is not
 Nobody has to re-derive the requirements; the spec is executable.
 
 Sequencing inside the wave: **A first, then B and C in any order or concurrently.**
-A and B have landed; C is in flight in a separate worktree. A is
-not merely largest, it *shrinks the other two* — VB-QA-33 and VB-QA-34 exist only because
+That is exactly how it ran — A landed on `main`, then B and C were built
+concurrently in separate worktrees and merged onto `wave15-packages-bc` (B is
+`d606879`, C is `00fbd0d`) with no production-code conflict. The claim was that A is
+not merely largest but *shrinks the other two* — VB-QA-33 and VB-QA-34 exist only because
 `ContentGuard` is compensating for `Tokenizer`, and gap G2 becomes much smaller once the
-tokenizer stops destroying content. Full file ownership, the constraints each fixer must
+tokenizer stops destroying content. Only half of that held: after A, the shield no longer
+changes the outcome for the inputs `TypedTextSafetyQaTest` compares — but VB-QA-33 and
+-34 are defects in `ContentGuard.needsShield` itself, both still failed with their
+`@Disabled` annotation removed, and C had to fix them there, which is why
+`ContentGuard.kt` appears in its `Owns` cell above. Full file ownership, the constraints each fixer must
 not violate, and per-package definitions of done are in [QA_REPORT.md §9](QA_REPORT.md).
 
 **The ordering question that was open here is now closed: bugs first, features
-later.** Wave 1.5 runs *before* Wave 1. That resolves the file collision it would
+later.** Wave 1.5 ran *before* Wave 1. That resolved the file collision it would
 otherwise have had — W1.2 (spoken-format intelligence) lists `core/text/Tokens.kt`
-among the files it owns, which is the file Package A rewrites. Building `4:30pm`
-and `$25` handling on a tokenizer that still deletes `:` and `$` would have meant
-writing the feature against behaviour about to change underneath it. Going in this
-order, W1.2 inherits a tokenizer that already preserves the characters it needs,
-and the feature gets smaller rather than reworked.
+among the files it owns, which is the file Package A rewrote. Building `4:30pm`
+and `$25` handling on a tokenizer that still deleted `:` and `$` would have meant
+writing the feature against behaviour about to change underneath it. **That gate
+is now satisfied**: W1.2 inherits a tokenizer that already preserves the
+characters it needs, and the feature is smaller rather than reworked.
 
-Running the two concurrently remains the one option that does not work: one file,
-two owners, and this project has already lost an agent's work to exactly that.
+Running W1.2 and Package A concurrently would have been the one option that does
+not work: one file, two owners, and this project has already lost an agent's work
+to exactly that.
 
-**Two of these were not schedulable as ordinary polish.** VB-QA-24 writes a one-time code
-or card number to disk when it arrives in non-ASCII digits — `SESSION_ONLY` is the privacy
-boundary and this crosses it; it is Package C's and **still open**. VB-QA-29 capitalized
-inside `PASSWORD` fields, which the spec says must be left untouched entirely; it is
-**closed by Package B**, which gated `capitalize()` on `FieldKind.allowsAutoCapitalize` at
-every position. If beta ships before the rest of this wave lands, VB-QA-24 is the one that
-should be lifted out and fixed first.
+**Two of these were not schedulable as ordinary polish, and both are now closed.**
+VB-QA-24 wrote a one-time code or card number to disk when it arrived in
+non-ASCII digits — `SESSION_ONLY` is the privacy boundary and this crossed it.
+**Package C closed it**, together with VB-QA-26 in the same change as the
+constraint required, and closed an unnumbered zero-width-character variant of the
+same crossing found in the same audit ([QA_REPORT.md §9](QA_REPORT.md)).
+VB-QA-29 capitalized inside `PASSWORD` fields, which the spec says must be left
+untouched entirely; **Package B closed it** by gating `capitalize()` on
+`FieldKind.allowsAutoCapitalize` at every position. Nothing in this wave now
+needs lifting out ahead of beta. Two narrower holes on the same privacy boundary
+remain open and carry no VB-QA id — `ClipClassifier`'s payment-card rule still
+reads raw text, and `DIGIT_RUN_PATTERN`'s separator class is still ASCII-only;
+see [QA_REPORT.md §9](QA_REPORT.md), "Not in any package". `README.md` still
+discloses VB-QA-24 and VB-QA-29 as live and needs correcting before beta.
 
 ### Wave 1 — Confidence foundation
 

@@ -7,7 +7,6 @@ import com.vboard.core.text.FieldKind
 import com.vboard.core.text.TextDiff
 import com.vboard.core.text.TranscriptCleaner
 import java.text.Normalizer
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 import kotlin.test.assertEquals
@@ -21,12 +20,12 @@ import kotlin.test.assertTrue
  * whether a second space becomes ". "; `TextDiff.replacement` decides the minimal
  * edit that turns the displayed partial into its replacement.
  *
- * All three are character-classification functions over the *last* character of
- * the preceding text, and all three inherit the same blind spot: a "character" in
- * Kotlin is a UTF-16 code unit, not a grapheme. AOSP LatinIME, HeliBoard and
- * AnySoftKeyboard all carry dedicated tests for exactly this seam (autospace
- * around quotes and URLs, double-space-period revert, deletion of multi-code-point
- * text); we had none.
+ * All three classify the boundary between the preceding text and the new text,
+ * and all three used to do it one UTF-16 code unit at a time — which is not a
+ * character. They work in code points and grapheme clusters now. AOSP LatinIME,
+ * HeliBoard and AnySoftKeyboard all carry dedicated tests for exactly this seam
+ * (autospace around quotes and URLs, double-space-period revert, deletion of
+ * multi-code-point text); we had none.
  */
 class CommitSeamQaTest {
 
@@ -68,27 +67,26 @@ class CommitSeamQaTest {
         assertEquals(" world", CommitPlanner.joinForInsertion(" ", " world"))
     }
 
-    // --------------------------------------- VB-QA-22: joining rules miss real cases
+    // --------------------------------------- VB-QA-22: joining rules cover real cases
 
     @Test
-    fun `joining puts a space before a possessive and after a hyphen or currency (pinned)`() {
-        // An apostrophe is an OPENER when it precedes, but nothing makes it a
-        // CLOSER when it follows, so a suggestion-strip commit of "'s" detaches.
-        assertEquals(" 's", CommitPlanner.joinForInsertion("hello", "'s"))
-        assertEquals(" ’s", CommitPlanner.joinForInsertion("hello", "’s"))
-        // A trailing hyphen is not an OPENER, so a hyphenated compound breaks.
-        assertEquals(" world", CommitPlanner.joinForInsertion("hello-", "world"))
-        // A currency sign is not an OPENER, so "$" + "5" becomes "$ 5".
-        assertEquals(" 5", CommitPlanner.joinForInsertion("$", "5"))
-        assertEquals(" 5", CommitPlanner.joinForInsertion("€", "5"))
-        // An ellipsis is not a CLOSER, so it detaches from the word it follows.
-        assertEquals(" …", CommitPlanner.joinForInsertion("hello", "…"))
-        // A closing curly quote is not a CLOSER either.
-        assertEquals(" ”", CommitPlanner.joinForInsertion("hello", "”"))
+    fun `joining attaches a possessive, a hyphenated compound and a currency amount (pinned)`() {
+        // An apostrophe opens when it precedes and closes when it follows, so a
+        // suggestion-strip commit of a bare possessive stays attached.
+        assertEquals("'s", CommitPlanner.joinForInsertion("hello", "'s"))
+        assertEquals("’s", CommitPlanner.joinForInsertion("hello", "’s"))
+        // A trailing hyphen opens, so a compound dictated in halves survives.
+        assertEquals("world", CommitPlanner.joinForInsertion("hello-", "world"))
+        // Currency is decided by category (Sc), so every sign behaves alike — the
+        // euro is the one that catches a hard-coded '$'.
+        assertEquals("5", CommitPlanner.joinForInsertion("$", "5"))
+        assertEquals("5", CommitPlanner.joinForInsertion("€", "5"))
+        // The typographic forms close exactly as their ASCII counterparts do.
+        assertEquals("…", CommitPlanner.joinForInsertion("hello", "…"))
+        assertEquals("”", CommitPlanner.joinForInsertion("hello", "”"))
     }
 
     @Test
-    @Disabled("VB-QA-22: CommitPlanner.OPENERS/CLOSERS (CommitPlanner.kt:10-13) are ASCII-only and omit trailing hyphens, currency signs, apostrophe-initial text and curly/typographic punctuation")
     fun `joining should attach possessives, hyphenated compounds and currency`() {
         assertEquals("'s", CommitPlanner.joinForInsertion("hello", "'s"))
         assertEquals("’s", CommitPlanner.joinForInsertion("hello", "’s"))
@@ -98,10 +96,10 @@ class CommitSeamQaTest {
         assertEquals("”", CommitPlanner.joinForInsertion("hello", "”"))
     }
 
-    // ---------------------- VB-QA-23: double-space-period is grapheme-unaware
+    // ---------------------- VB-QA-23: double-space-period is grapheme-aware
 
     @Test
-    fun `double space becomes a period only after an ASCII-classifiable character (pinned)`() {
+    fun `double space becomes a period after any character that ends a word (pinned)`() {
         assertTrue(CommitPlanner.doubleSpacePeriodApplies("ab "))
         assertTrue(CommitPlanner.doubleSpacePeriodApplies("1 "))
         assertTrue(CommitPlanner.doubleSpacePeriodApplies(") "))
@@ -113,15 +111,14 @@ class CommitSeamQaTest {
         assertTrue(!CommitPlanner.doubleSpacePeriodApplies(" "))
         assertTrue(!CommitPlanner.doubleSpacePeriodApplies(""))
 
-        // The two that are wrong: an emoji is a surrogate pair whose low half is
-        // not a letter or digit, and an NFD accented letter ends in a combining
-        // mark. Both are ordinary ways to end a sentence.
-        assertTrue(!CommitPlanner.doubleSpacePeriodApplies("👋 "))
-        assertTrue(!CommitPlanner.doubleSpacePeriodApplies(Normalizer.normalize("café ", Normalizer.Form.NFD)))
+        // The two that used to be wrong: an emoji is a surrogate pair whose low
+        // half is not a letter or digit, and an NFD accented letter ends in a
+        // combining mark. Both are ordinary ways to end a sentence.
+        assertTrue(CommitPlanner.doubleSpacePeriodApplies("👋 "))
+        assertTrue(CommitPlanner.doubleSpacePeriodApplies(Normalizer.normalize("café ", Normalizer.Form.NFD)))
     }
 
     @Test
-    @Disabled("VB-QA-23: doubleSpacePeriodApplies (CommitPlanner.kt:33) inspects one UTF-16 char, so it silently stops working after an emoji or an NFD-accented letter")
     fun `double space should become a period after an emoji or a combining mark`() {
         assertTrue(CommitPlanner.doubleSpacePeriodApplies("👋 "))
         assertTrue(CommitPlanner.doubleSpacePeriodApplies(Normalizer.normalize("café ", Normalizer.Form.NFD)))
@@ -157,20 +154,26 @@ class CommitSeamQaTest {
     }
 
     @Test
-    fun `the diff splits other grapheme clusters (pinned)`() {
-        // A combining mark: the prefix keeps the base letter and replaces only the
-        // mark, so the field briefly shows an unaccented letter.
+    fun `the diff rounds the kept prefix back to a cluster boundary (pinned)`() {
+        // A combining mark: base and mark are replaced together, so the field
+        // never briefly shows an unaccented letter.
         val nfd = { s: String -> Normalizer.normalize(s, Normalizer.Form.NFD) }
-        assertEquals(4, TextDiff.replacement(nfd("café"), nfd("cafê")).keepPrefixLength)
-        // A regional-indicator flag: the prefix stops between the two halves, so
-        // the field briefly shows a lone 🇺 letter symbol.
-        assertEquals(2, TextDiff.replacement("🇺🇸", "🇺🇦").keepPrefixLength)
-        // A ZWJ sequence: the prefix stops after the ZWJ.
-        assertEquals(9, TextDiff.replacement("hi 👨‍👩‍👧", "hi 👨‍👩‍👦").keepPrefixLength)
+        assertEquals(3, TextDiff.replacement(nfd("café"), nfd("cafê")).keepPrefixLength)
+        // A regional-indicator flag: both halves go, so no lone 🇺 letter symbol.
+        assertEquals(0, TextDiff.replacement("🇺🇸", "🇺🇦").keepPrefixLength)
+        // A ZWJ sequence: the prefix stops before the family, not after a ZWJ.
+        assertEquals(3, TextDiff.replacement("hi 👨‍👩‍👧", "hi 👨‍👩‍👦").keepPrefixLength)
+        // The three cases BreakIterator's legacy clusters get wrong on this JDK,
+        // which is why the boundary rule is hand-rolled: a skin-tone modifier is
+        // part of the hand rather than a character after it...
+        assertEquals(0, TextDiff.replacement("👋🏽", "👋🏻").keepPrefixLength)
+        // ...a keycap is digit + U+FE0F + U+20E3, all three or none...
+        assertEquals(0, TextDiff.replacement("1️⃣", "1").keepPrefixLength)
+        // ...and a variation selector glues to whatever it is modifying.
+        assertEquals(0, TextDiff.replacement("a️", "a").keepPrefixLength)
     }
 
     @Test
-    @Disabled("VB-QA-28: TextDiff.replacement guards surrogate pairs only, so a live partial update can cut a ZWJ emoji sequence, a flag, or a combining mark in half")
     fun `the diff should never split any grapheme cluster`() {
         val nfd = { s: String -> Normalizer.normalize(s, Normalizer.Form.NFD) }
         assertEquals(3, TextDiff.replacement(nfd("café"), nfd("cafê")).keepPrefixLength)

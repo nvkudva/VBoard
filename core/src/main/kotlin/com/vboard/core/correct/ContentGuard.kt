@@ -17,9 +17,10 @@ package com.vboard.core.correct
  * rules are safe on.
  *
  * A span is shielded when its core (the chunk minus wrapping punctuation) holds
- * any character outside `letter / digit / ' / -`, any digit at all, or an
- * uppercase letter past the first position. That covers URLs, email addresses,
- * @handles, #tags, file paths, code, currency, times, versions, dates, emoji,
+ * any character outside `letter / digit / ' / -` (a combining mark on a letter
+ * excepted), any digit at all, a hyphen on either edge, or an uppercase letter
+ * past the first position. That covers URLs, email addresses, @handles, #tags,
+ * file paths, code, currency, times, versions, dates, emoji, command-line flags,
  * and deliberate casing like `iPhone` or `ASAP`.
  */
 object ContentGuard {
@@ -132,6 +133,14 @@ object ContentGuard {
 
     /** True when the cleaner must not be allowed to touch [core]. */
     fun needsShield(core: String): Boolean {
+        if (core.isEmpty()) return false
+        // A hyphen is word-internal only in the middle. On either edge it marks a
+        // command-line flag, a markdown bullet or a dashed fragment, all of which
+        // the tokenizer emits as bare punctuation and the renderer then spaces out
+        // ("-m" -> "- m"). The letter-or-digit clause is load-bearing: a lone "-"
+        // bullet has to stay in the prose stream, or the word after it is no longer
+        // at a sentence start and never gets capitalized.
+        if ((core.first() == '-' || core.last() == '-') && core.any { it.isLetterOrDigit() }) return true
         var upperInside = false
         for (index in core.indices) {
             val ch = core[index]
@@ -139,10 +148,24 @@ object ContentGuard {
                 ch.isDigit() -> return true
                 ch.isLetter() -> if (index > 0 && ch.isUpperCase()) upperInside = true
                 ch == '\'' || ch == '-' -> Unit
+                // A mark on a letter is only the NFD spelling of an accented word,
+                // which the cleaner handles fine; shielding it would make casing
+                // depend on which normalization form the text arrived in. A mark
+                // anywhere else — leading, or after an emoji, where U+FE0F is
+                // itself Mn — is real content and still has to be shielded.
+                isMark(ch) && index > 0 && core[index - 1].isLetter() -> Unit
                 else -> return true
             }
         }
         return upperInside
+    }
+
+    private fun isMark(ch: Char): Boolean = when (Character.getType(ch)) {
+        Character.NON_SPACING_MARK.toInt(),
+        Character.COMBINING_SPACING_MARK.toInt(),
+        Character.ENCLOSING_MARK.toInt(),
+        -> true
+        else -> false
     }
 
     /**
