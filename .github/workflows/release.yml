@@ -76,7 +76,17 @@ jobs:
           fi
           # apksigner is the only thing that proves installability; a build that
           # silently fell back to unsigned must not reach a release page.
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK"
+          #
+          # Pick exactly one apksigner: the runner has several build-tools
+          # versions installed, so an unquoted glob expands to every one of them
+          # and bash treats the first as the command and the rest as its
+          # arguments ("Unsupported command: .../apksigner").
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $ANDROID_HOME/build-tools."
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "$APK"
           mv "$APK" "VBoard-${{ steps.version.outputs.name }}.apk"
           echo "APK_PATH=VBoard-${{ steps.version.outputs.name }}.apk" >> "$GITHUB_ENV"
 
