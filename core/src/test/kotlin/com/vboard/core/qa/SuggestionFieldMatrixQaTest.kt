@@ -295,6 +295,23 @@ class SuggestionFieldMatrixQaTest {
     }
 
     @Test
+    fun `the accented-word rule silences the trie, not the words the user taught`() {
+        // VB-QA-32's suppression belongs to the a-z trie, whose edit distance
+        // cannot measure "è". The user's own history has no such limit — it learns
+        // accented words and predicts them — so a rule scoped to the whole engine
+        // would cost a French or Turkish user their own vocabulary.
+        val history = UserHistory()
+        val engine = engine(history)
+        engine.recordCommittedWord("crème", "brûlée")
+        assertTrue(history.unigramCount("brûlée") > 0, "an accented word was not learned")
+        assertEquals(
+            "brûlée",
+            suggest("", "crème", FieldKind.TEXT, engine = engine).suggestions.first().text,
+            "a learned accented word was not predicted",
+        )
+    }
+
+    @Test
     fun `a correctly spelled word should lead its own suggestion strip`() {
         for (word in listOf("naïve", "Müller", "café", "résumé")) {
             val result = suggest(word, null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE)

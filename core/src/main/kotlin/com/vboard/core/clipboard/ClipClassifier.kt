@@ -14,7 +14,8 @@ package com.vboard.core.clipboard
  *  4. Visually empty                              -> discard.
  *  5. `^\p{Nd}{4,8}$` once invisible code points
  *     are dropped and the rest trimmed             -> session-only (one-time code).
- *  6. Luhn-valid 13-19 digit run (payment card),
+ *  6. Luhn-valid 13-19 digit run in that same
+ *     invisible-stripped text (payment card),
  *     or a `-----BEGIN ...-----` block            -> session-only.
  *  7. Otherwise                                   -> normal.
  *
@@ -34,11 +35,17 @@ object ClipClassifier {
     private val PEM_PATTERN = Regex("""-----BEGIN [^-\r\n]{0,64}-----""")
 
     /**
-     * A run of digits optionally grouped by single spaces or hyphens, as card
-     * numbers are almost always pasted ("4111 1111 1111 1111"). Bounded by
-     * non-digits so a longer number is not sliced into a false positive.
+     * A run of digits optionally grouped by a single separator, as card numbers
+     * are almost always pasted ("4111 1111 1111 1111"). Bounded by non-digits so
+     * a longer number is not sliced into a false positive.
+     *
+     * The separator is any space separator (Zs) or dash (Pd), not just ASCII
+     * space and hyphen-minus: a number copied out of a web page or a banking app
+     * routinely arrives grouped with U+00A0, U+202F or an en dash, and an
+     * ASCII-only separator class let every one of those evade Luhn.
      */
-    private val DIGIT_RUN_PATTERN = Regex("""(?<!\p{Nd})\p{Nd}(?:[ -]?\p{Nd}){12,18}(?!\p{Nd})""")
+    private val DIGIT_RUN_PATTERN =
+        Regex("""(?<!\p{Nd})\p{Nd}(?:[\p{Zs}\p{Pd}]?\p{Nd}){12,18}(?!\p{Nd})""")
 
     fun classify(
         text: String,
@@ -56,11 +63,15 @@ object ClipClassifier {
 
         // Invisible characters ride along on copies from web pages and chat apps,
         // and `String.trim` never removes them: a code carrying a ZWSP would miss
-        // the OTP shape and be persisted to disk as NORMAL. Strip them first.
-        if (OTP_PATTERN.matches(stripInvisible(text).trim())) {
+        // the OTP shape and be persisted to disk as NORMAL. Strip them first, and
+        // hand the card rule the same text — the two rules must not disagree about
+        // what the user can see, or a ZWSP dropped into a card number breaks the
+        // digit run, fails Luhn, and lands the number on disk.
+        val visible = stripInvisible(text)
+        if (OTP_PATTERN.matches(visible.trim())) {
             return ClipDecision.Keep(ClipClass.SESSION_ONLY)
         }
-        if (containsPaymentCard(text) || PEM_PATTERN.containsMatchIn(text)) {
+        if (containsPaymentCard(visible) || PEM_PATTERN.containsMatchIn(text)) {
             return ClipDecision.Keep(ClipClass.SESSION_ONLY)
         }
         return ClipDecision.Keep(ClipClass.NORMAL)

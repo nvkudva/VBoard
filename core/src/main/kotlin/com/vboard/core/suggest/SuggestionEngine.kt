@@ -137,9 +137,10 @@ class SuggestionEngine(
             candidates[word] = Candidate(word, score, Suggestion.Source.COMPLETION, extra)
         }
 
-        // Fuzzy corrections. Skipped entirely for text the lexicon cannot spell:
-        // every match it could return is a mis-measurement (VB-QA-32).
-        if (!isOutsideLexiconAlphabet(composing)) {
+        // Fuzzy corrections. Skipped for text the trie cannot spell: every match
+        // it could return is a mis-measurement (VB-QA-32). This is a fact about
+        // this one candidate source, so the skip lives at its call site.
+        if (!isOutsideTrieAlphabet(composing)) {
             val maxCost = if (lower.length <= SHORT_WORD_LENGTH) 1.0 else 2.0
             lexicon.fuzzyMatch(lower, maxCost) { word, frequency, cost, ops ->
                 val score = ln(1.0 + frequency) - EDIT_PENALTY * cost + historyBoost(word, prev)
@@ -227,7 +228,6 @@ class SuggestionEngine(
         // Internal capitals ("iPhone", "VBoard", "McDonald") signal deliberate
         // input and gate autocorrect exactly like ALL-CAPS does (VB-QA-06).
         if (composing.length > 1 && composing.drop(1).any { it.isUpperCase() }) return null
-        if (isOutsideLexiconAlphabet(composing)) return null
 
         // Lone lowercase "i" becomes "I" in free-form text.
         if (composing == "i" && kind == FieldKind.TEXT) {
@@ -260,16 +260,22 @@ class SuggestionEngine(
     }
 
     /**
-     * True when [composing] contains a letter the lexicon's alphabet cannot spell.
+     * True when [composing] contains a letter the bundled trie cannot spell.
      *
      * The trie holds a-z only, and the weighted edit distance charges "è" -> "i"
      * as one ordinary substitution — so an out-of-lexicon accented word lands one
      * edit from a frequent ASCII one and the margin falls over ("crème" -> "crime",
-     * "élan" -> "plan"). No candidate the matcher can return for such a token is
-     * a real spelling of it, so none is offered and the literal stands alone.
-     * Deliberate ASCII casing ("iPhone", "ASAP") is untouched by this test.
+     * "élan" -> "plan"). No word the *fuzzy walk* can return for such a token is a
+     * real spelling of it (VB-QA-32).
+     *
+     * That is a limit of the trie, not of the engine, so nothing else consults
+     * this: autocorrect declines an accented token because the trie handed it no
+     * candidate, not because a blanket rule silenced every source. User history —
+     * which does learn accented words and does surface them as predictions — must
+     * stay reachable. Deliberate ASCII casing ("iPhone", "ASAP") is untouched by
+     * this test either way.
      */
-    private fun isOutsideLexiconAlphabet(composing: String): Boolean {
+    private fun isOutsideTrieAlphabet(composing: String): Boolean {
         var i = 0
         while (i < composing.length) {
             val cp = composing.codePointAt(i)
