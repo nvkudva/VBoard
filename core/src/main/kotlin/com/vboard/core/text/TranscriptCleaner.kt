@@ -148,11 +148,16 @@ class TranscriptCleaner {
         start: Int,
         match: PhraseMatch,
     ): Boolean {
-        // (1) Nothing precedes an utterance-initial phrase, so there is no evidence
-        // it was meant as dictation — and it is the one position where a leading
-        // "." or "?" is dropped by normalizePunctuationSequence, losing the word
-        // without even leaving a symbol behind.
-        if (start == 0) return false
+        // (1) At index 0 a converted mark is the one that normalizePunctuationSequence
+        // drops on the way out, so the word that became it vanishes without even
+        // leaving a symbol behind. That leading-drop loop removes Tok.Punct only and
+        // never a Tok.Break, so the argument does not reach break commands: an
+        // utterance that opens with "new paragraph ..." keeps every token either way,
+        // and typing the words is simply the wrong answer for a normal way to dictate.
+        // Knowingly accepted collateral: "new line of thinking" now breaks the line.
+        // It is token-for-token the same shape as "new paragraph here is my text", so
+        // no rule can convert one and refuse the other (VB-QA-18).
+        if (start == 0 && match.replacement is Tok.Punct) return false
 
         // (2) A determiner immediately before it makes it a noun phrase: "add a
         // period at the end", "on the next line item". Multi-word phrases need this
@@ -203,11 +208,13 @@ class TranscriptCleaner {
             w0 == "dot" && w1 == "dot" && w2 == "dot" -> return PhraseMatch(Tok.Punct(ELLIPSIS), 3)
         }
 
-        // Single-word punctuation. "hashtag" is deliberately absent: it is a common
-        // noun ("use hashtag now", "a hashtag for it") and nobody dictates the bare
-        // symbol, so there is no conversion here worth the false positives (VB-QA-18).
+        // Single-word punctuation. "hashtag" is a common noun as often as it is a
+        // symbol ("a hashtag for it"), but dropping it from the table removed the
+        // only way to dictate "#" at all; it carries the same conversionIsIntended
+        // corroboration as every other single word here instead (VB-QA-18).
         val single = when (w0) {
             "period" -> "."
+            "hashtag" -> "#"
             "comma" -> ","
             "colon" -> ":"
             "semicolon" -> ";"

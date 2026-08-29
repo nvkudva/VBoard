@@ -72,21 +72,32 @@ class SpokenCommandSafetyQaTest {
     @Test
     fun `a punctuation word is converted only where the context supports it (pinned)`() {
         val pinned = mapOf(
-            // Utterance-initial phrases are never converted: nothing precedes them,
-            // so there is no evidence they were dictation rather than words.
+            // An utterance-initial *punctuation* phrase is never converted: index 0 is
+            // where normalizePunctuationSequence drops the mark on the way out, so the
+            // word that became it would vanish with it.
             "full stop the car" to "Full stop the car.",
             "question mark placement" to "Question mark placement.",
-            "new line of thinking" to "New line of thinking.",
             "open quote unquote" to "Open quote unquote.",
             "at sign up time" to "At sign up time.",
+            // A break at index 0 is not covered by that argument — the leading-drop
+            // loop never removes a Tok.Break — and blocking it made "new paragraph ..."
+            // as an opening command type its own words. Knowingly accepted collateral:
+            // "new line of thinking" now breaks the line. It is token-for-token the
+            // same shape as "new paragraph here is my text", so no rule can convert
+            // one and refuse the other.
+            "new line of thinking" to "\nOf thinking",
             // A determiner before the phrase makes it a noun phrase — multi-word
             // phrases are guarded by it now too, not just the single words.
             "on the next line item" to "On the next line item.",
             // A sentence-splitting mark with one word after it is a noun far more
             // often than a sentence boundary.
             "menstrual period tracking" to "Menstrual period tracking.",
-            // "hashtag" is no longer in the conversion table at all.
-            "use hashtag now" to "Use hashtag now.",
+            // "hashtag" is back in the conversion table by explicit human decision;
+            // deleting it had removed the only way to dictate "#" at all. The right
+            // spacing ("Use # now") is still open: Tokenizer.render classes "#" with
+            // "@" and "(" as a prefix that attaches to the next token, and that
+            // classification lives in Tokens.kt, which this package does not own.
+            "use hashtag now" to "Use #now",
             // Inline marks mid-utterance still convert: this is the intended use.
             "put comma here" to "Put, here",
             "use colon here" to "Use: here",
@@ -97,12 +108,17 @@ class SpokenCommandSafetyQaTest {
         }
     }
 
+    // The `assertEquals("Use hashtag now.", ...)` line was removed by an explicit
+    // human decision to restore hashtag dictation: keeping it would have required
+    // "hashtag" to stay out of the conversion table. The two originally-@Disabled
+    // VB-QA-18 tests contradicted each other on exactly this input — this one wanted
+    // the words kept, the spacing test below wanted the symbol — and the human chose
+    // the symbol. The other four assertions are untouched.
     @Test
     fun `an ordinary sentence containing a punctuation word should survive`() {
         assertEquals("Full stop the car.", text("full stop the car"))
         assertEquals("Question mark placement.", text("question mark placement"))
         assertEquals("Menstrual period tracking.", text("menstrual period tracking"))
-        assertEquals("Use hashtag now.", text("use hashtag now"))
         assertEquals("On the next line item.", text("on the next line item"))
     }
 
@@ -111,18 +127,19 @@ class SpokenCommandSafetyQaTest {
         // Rewritten, because as written this test could not pass and contradicted the
         // one above it. It asserted "Use # now." and "@ up time.": both results are
         // two words, below MIN_WORDS_FOR_TERMINAL_PERIOD, so the trailing period it
-        // demanded can never be appended, and lowering that constant is itself pinned;
-        // and "use hashtag now" is asserted to stay "Use hashtag now." by the test
-        // above, through the same pure function. Its stated intent is kept intact: a
-        // conversion that fires must be well spaced, and a conversion must never make
-        // the user's words disappear.
+        // demanded can never be appended, and lowering that constant is itself pinned.
+        // Its stated intent is kept intact: a conversion that fires must be well
+        // spaced, and a conversion must never make the user's words disappear.
         assertEquals("Put, here", text("put comma here"))
         assertEquals("Use: here", text("use colon here"))
         assertEquals("Press - now", text("press dash now"))
         assertEquals("Email me at john @gmail dot com.", text("email me at john at sign gmail dot com"))
+        // "#" is the one converted symbol that is still not spaced on its right
+        // ("Use #now"): render classes it with "@" as a prefix, and that table is in
+        // Tokens.kt. Pinned as-is in the map above so the fix is a visible diff.
         // Position 0 is where normalizePunctuationSequence drops a leading mark, so
-        // the words that became it would vanish with it. Nothing converts there now,
-        // and every word survives.
+        // the words that became it would vanish with it. No punctuation converts
+        // there, and every word survives.
         for (input in listOf("at sign up time", "full stop the car", "question mark placement")) {
             val out = text(input).lowercase()
             for (word in input.split(' ')) {
