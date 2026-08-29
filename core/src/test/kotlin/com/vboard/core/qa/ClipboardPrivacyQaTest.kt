@@ -148,6 +148,54 @@ class ClipboardPrivacyQaTest {
     }
 
     @Test
+    fun `a payment card wearing an invisible character is still session-only`() {
+        // The same evasion as the one-time code's, one rule over: the OTP test was
+        // given the invisible-stripped text and the card test was handed the raw
+        // clip, so a ZWSP pasted inside a card number broke the digit run, failed
+        // Luhn, and wrote the number to the history file on disk.
+        for (card in listOf(
+            "4111\u200B111111111111",
+            "4111111111\u2060111111",
+            "4111\u00AD1111\u00AD1111\u00AD1111",
+            "your card is 4111 1111 1111\uFEFF 1111 thanks",
+        )) {
+            assertEquals(ClipDecision.Keep(ClipClass.SESSION_ONLY), ClipClassifier.classify(card), "for <$card>")
+        }
+    }
+
+    @Test
+    fun `a payment card grouped by a non-ASCII separator is still session-only`() {
+        // Cards copied out of web pages and banking apps arrive grouped with an
+        // NBSP or an en dash. The digit class was internationalized and the
+        // separator class was left ASCII, so those groupings evaded Luhn.
+        for (card in listOf(
+            "4111\u00A01111\u00A01111\u00A01111", // no-break space
+            "4111\u202F1111\u202F1111\u202F1111", // narrow no-break space
+            "4111\u20071111\u20071111\u20071111", // figure space
+            "4111\u20101111\u20101111\u20101111", // hyphen (not hyphen-minus)
+            "4111\u20131111\u20131111\u20131111", // en dash
+            "4111\u20141111\u20141111\u20141111", // em dash
+        )) {
+            assertEquals(ClipDecision.Keep(ClipClass.SESSION_ONLY), ClipClassifier.classify(card), "for <$card>")
+        }
+    }
+
+    @Test
+    fun `the widened card rule still leaves ordinary numbers normal`() {
+        // The other half of the boundary: a classifier that grows too eager starts
+        // discarding clips a user wanted kept.
+        for (text in listOf(
+            "4111\u00A01111\u00A01111\u00A01112", // one digit off, so not a card
+            "+1\u00A0415\u00A0555\u00A00132", // a phone number
+            "2026\u201308\u201329",
+            "1234\u20135678\u20139012",
+            "4111\u200B1111\u200B1111\u200B1112",
+        )) {
+            assertEquals(ClipDecision.Keep(ClipClass.NORMAL), ClipClassifier.classify(text), "for <$text>")
+        }
+    }
+
+    @Test
     fun `a visually empty clip should be discarded as blank`() {
         assertEquals(ClipDecision.Discard(DiscardReason.BLANK), ClipClassifier.classify("​"))
         assertEquals(ClipDecision.Discard(DiscardReason.BLANK), ClipClassifier.classify("​‌﻿"))
