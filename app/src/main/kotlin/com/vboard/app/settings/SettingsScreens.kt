@@ -47,10 +47,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import android.util.Log
 import androidx.datastore.preferences.core.Preferences
 import com.vboard.app.R
 import com.vboard.app.keyboard.ThemeMode
 import com.vboard.app.models.ModelDownloadService
+import com.vboard.app.voice.VoiceEngines
 import com.vboard.app.onboarding.effectivePackState
 import com.vboard.app.onboarding.formatBytes
 import com.vboard.app.onboarding.installErrorText
@@ -63,6 +65,8 @@ import com.vboard.core.suggest.AutocorrectMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val TAG = "VBoardSettings"
 
 private fun themeLabel(mode: ThemeMode): String = when (mode) {
     ThemeMode.SYSTEM -> "System"
@@ -367,7 +371,13 @@ fun SettingsScreen(
                     onClick = {
                         pendingDelete = null
                         scope.launch(Dispatchers.IO) {
-                            packInstaller.delete(packToDelete)
+                            // Unload before deleting: the engines mmap these files,
+                            // so deleting underneath them neither frees the space
+                            // nor stops dictation from working against models the
+                            // user believes they removed.
+                            VoiceEngines.releaseAll()
+                            runCatching { packInstaller.delete(packToDelete) }
+                                .onFailure { Log.e(TAG, "pack delete failed", it) }
                             withContext(Dispatchers.Main) { diskTick++ }
                         }
                     },

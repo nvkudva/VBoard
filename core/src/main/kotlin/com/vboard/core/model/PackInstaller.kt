@@ -1,6 +1,10 @@
 package com.vboard.core.model
 
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
 import java.io.IOException
+import java.io.UncheckedIOException
+import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -183,18 +187,21 @@ class PackInstaller(
             val alreadyFetched = existingBytes > 0 && expectedBytes >= 0 && existingBytes == expectedBytes
             if (!alreadyFetched) {
                 try {
-                    DigestOutputStream(
-                        Files.newOutputStream(
-                            part,
-                            StandardOpenOption.CREATE,
-                            StandardOpenOption.WRITE,
-                            StandardOpenOption.APPEND,
-                        ),
-                        digest,
-                    ).use { sink ->
+                    // Written through a FileOutputStream (rather than
+                    // Files.newOutputStream) purely so the descriptor is reachable:
+                    // flush() only empties userspace buffers, and a power loss
+                    // between the last write and the completion marker would leave
+                    // a pack marked installed whose bytes never reached the disk.
+                    val out = FileOutputStream(part.toFile(), /* append = */ true)
+                    try {
+                        val sink = DigestOutputStream(BufferedOutputStream(out), digest)
                         fetcher.fetch(spec.url, existingBytes, sink) { newBytes ->
                             emitProgress(progressBase + newBytes)
                         }
+                        sink.flush()
+                        out.fd.sync()
+                    } finally {
+                        out.close()
                     }
                 } catch (e: CancellationException) {
                     // Partial files retained for resume.
@@ -245,7 +252,13 @@ class PackInstaller(
             } catch (e: AtomicMoveNotSupportedException) {
                 Files.move(staging, final)
             }
-            Files.writeString(final.resolve(MARKER_NAME), pack.version.toString())
+            // The marker is the only thing that makes a pack "installed", so it must
+            // become durable strictly after the payload it vouches for. Sync the
+            // renamed directory entries first, then the marker, then its directory.
+            syncDir(final)
+            syncDir(final.parent)
+            writeFileDurably(final.resolve(MARKER_NAME), pack.version.toString().toByteArray())
+            syncDir(final)
         } catch (e: IOException) {
             return fail(InstallError.IO)
         }
@@ -254,9 +267,31 @@ class PackInstaller(
         return PackState.Installed
     }
 
-    /** Deletes installed files AND partial downloads for the pack, including old versions. */
-    fun delete(pack: ModelPack) {
-        deleteRecursively(packDir(pack))
+    /**
+     * Deletes installed files AND partial downloads for the pack, including old
+     * versions. Takes the same per-pack lock [install] holds so a delete cannot
+     * run against a directory a download is writing into.
+     */
+    suspend fun delete(pack: ModelPack) {
+        lockFor(pack).withLock { deleteRecursively(packDir(pack)) }
+    }
+
+    /**
+     * Drops the pack's installed marker so [stateOf] reports [PackState.NotInstalled]
+     * and the UI offers a re-download.
+     *
+     * Consumers call this when an installed payload turns out to be unusable (an
+     * archive that will not extract, a model the native loader rejects). Without
+     * it the pack reports Installed forever with no repair path, which is a dead
+     * end for the user: the only affordance the error offers leads to a screen
+     * that already says the pack is there.
+     */
+    fun invalidate(pack: ModelPack) {
+        try {
+            Files.deleteIfExists(markerFile(pack))
+        } catch (e: IOException) {
+            // Best effort: a marker we cannot delete is no worse than before.
+        }
     }
 
     /** Bytes already downloaded (partial + complete) for resume-aware UI. */
@@ -287,10 +322,61 @@ class PackInstaller(
             0L
         }
 
-    private fun deleteRecursively(path: Path) {
-        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return
-        Files.walk(path).use { stream ->
-            stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+    /**
+     * Best-effort recursive delete; returns false if anything survived.
+     *
+     * Never throws. Files.walk and Files.deleteIfExists raise [UncheckedIOException],
+     * which is NOT an [IOException]: it slipped straight through the installer's
+     * catch, out of install(), and into the download service's bare coroutine
+     * launch, taking the process with it.
+     */
+    private fun deleteRecursively(path: Path): Boolean {
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return true
+        var ok = true
+        try {
+            Files.walk(path).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach { entry ->
+                    try {
+                        Files.deleteIfExists(entry)
+                    } catch (e: IOException) {
+                        ok = false
+                    } catch (e: UncheckedIOException) {
+                        ok = false
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            ok = false
+        } catch (e: UncheckedIOException) {
+            ok = false
+        }
+        return ok
+    }
+
+    /** Writes [bytes] to [path] and forces them to the platter before returning. */
+    @Throws(IOException::class)
+    private fun writeFileDurably(path: Path, bytes: ByteArray) {
+        FileOutputStream(path.toFile()).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+    }
+
+    /**
+     * Forces a directory's entries to disk, so a rename that precedes a completion
+     * marker survives a power loss. Best effort: opening a directory as a channel
+     * is not portable, and a filesystem that refuses simply leaves us where the
+     * code was before.
+     */
+    private fun syncDir(dir: Path?) {
+        if (dir == null) return
+        try {
+            FileChannel.open(dir, StandardOpenOption.READ).use { it.force(true) }
+        } catch (e: IOException) {
+            // Not supported here; nothing to do.
+        } catch (e: UnsupportedOperationException) {
+            // Ditto.
         }
     }
 

@@ -3,8 +3,10 @@ package com.vboard.app.ime
 import android.animation.ValueAnimator
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -85,6 +87,21 @@ class VBoardImeService : InputMethodService() {
     // ------------------------------------------------------------------ views
 
     override fun onCreateInputView(): View {
+        // Everything below is rebuilt on every configuration change, but voiceBar
+        // and emojiPanel are long-lived fields whose attach guards test
+        // `parent == null`. After a rotation their parent is the OLD, detached
+        // frame, so they were never added to the new one: the mic key produced a
+        // blank keyboard with a live microphone behind it. Drop them here so the
+        // next press builds fresh views; removeView also detaches them, which is
+        // what stops their animators.
+        voiceController?.cancelSessionSilently()
+        detachPanel(voiceBar)
+        voiceBar?.listener = null
+        voiceBar = null
+        detachPanel(emojiPanel)
+        emojiPanel?.listener = null
+        emojiPanel = null
+
         theme = KeyboardTheme.forContext(this, settings.themeMode)
 
         keyboardView = KeyboardView(this, theme).apply {
@@ -117,6 +134,11 @@ class VBoardImeService : InputMethodService() {
         return root
     }
 
+    /** Detaches a panel from whatever frame it currently belongs to, if any. */
+    private fun detachPanel(view: View?) {
+        (view?.parent as? ViewGroup)?.removeView(view)
+    }
+
     private fun applyWindowInsetsPadding() {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val bottom = insets.getInsets(
@@ -129,13 +151,90 @@ class VBoardImeService : InputMethodService() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
-        super.onStartInputView(info, restarting)
+    /**
+     * Fires for every new editor session, including restarts that reuse the
+     * existing view — [onStartInputView] alone therefore misses some of them,
+     * and stale composing state leaks between fields.
+     */
+    override fun onStartInput(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(info, restarting)
         profile = EditorProfile.from(info)
+        resetEditingState()
+    }
+
+    /**
+     * The counterpart of [onStartInput]. [onFinishInputView] is a different event
+     * (the view being hidden) and does not fire on every editor teardown, so the
+     * shadow composing state has to be dropped here too.
+     */
+    override fun onFinishInput() {
+        endVoiceSession(hideOnly = true, finalizePending = false)
+        resetEditingState()
+        super.onFinishInput()
+    }
+
+    /**
+     * The editor is the source of truth for the composing region; [composing] is
+     * only a shadow copy. Nothing used to reconcile the two, so any cursor move,
+     * external edit or autofill left us confidently editing text that had moved —
+     * committing the wrong word, or reverting an autocorrect over a different
+     * region entirely.
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
+        )
+        val moved = newSelStart != oldSelStart || newSelEnd != oldSelEnd
+        if (composing.isEmpty()) {
+            // A backspace-revert is only valid immediately after the autocorrect
+            // that produced it, at the cursor where it happened.
+            if (moved) lastAutocorrect = null
+            return
+        }
+        // candidatesStart == -1 means the editor dropped the composing region.
+        val insideComposing = candidatesStart >= 0 &&
+            newSelStart == newSelEnd &&
+            newSelStart >= candidatesStart &&
+            newSelStart <= candidatesEnd
+        if (insideComposing) return
+
+        composing.setLength(0)
+        pendingAutocorrect = null
+        lastAutocorrect = null
+        // Let go of a region we no longer own rather than keep composing into it.
+        currentInputConnection?.finishComposingText()
+        if (viewsReady()) refreshSuggestions()
+    }
+
+    /**
+     * Drops every piece of state derived from the current editor.
+     *
+     * voiceCommits is deliberately kept across selection changes: it is only ever
+     * used after verifying the text before the cursor still matches, so a stale
+     * entry is inert rather than dangerous. It is cleared here, where the editor
+     * itself is changing.
+     */
+    private fun resetEditingState() {
         composing.setLength(0)
         pendingAutocorrect = null
         lastAutocorrect = null
         voiceCommits.clear()
+    }
+
+    /** True once [onCreateInputView] has built the view hierarchy. */
+    private fun viewsReady(): Boolean = ::keyboardView.isInitialized && ::strip.isInitialized
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        profile = EditorProfile.from(info)
+        resetEditingState()
 
         theme = KeyboardTheme.forContext(this, settings.themeMode)
         keyboardView.applyTheme(theme)
@@ -145,13 +244,15 @@ class VBoardImeService : InputMethodService() {
         setLayer(KeyboardLayer.LETTERS)
         keyboardView.enterIcon = profile.enterIcon
         keyboardView.micEnabled = profile.fieldKind.allowsVoice
-        endVoiceSession(hideOnly = true)
+        endVoiceSession(hideOnly = true, finalizePending = false)
         updateShiftForContext()
         refreshSuggestions()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        endVoiceSession(hideOnly = true)
+        // Anything already spoken must still reach the field (VB-107), so the
+        // buffered audio is finalized rather than dropped on the floor.
+        endVoiceSession(hideOnly = true, finalizePending = true)
         commitComposingAsIs()
         super.onFinishInputView(finishingInput)
     }
@@ -316,7 +417,10 @@ class VBoardImeService : InputMethodService() {
         val prevWord = previousCommittedWord()
         suggestionJob?.cancel()
         suggestionJob = serviceScope.launch {
-            val result: SuggestionResult = withContext(Dispatchers.Default) {
+            // Every touch of the engine goes through the app's single suggestion
+            // thread; UserHistory is an access-ordered LRU, so even a read
+            // structurally mutates it and it cannot be shared across threads.
+            val result: SuggestionResult = withContext(app.suggestDispatcher) {
                 engine.suggest(
                     SuggestionRequest(
                         composing = composingWord,
@@ -375,7 +479,7 @@ class VBoardImeService : InputMethodService() {
         if (word.length < 2 || word.any { it.isDigit() }) return
         val engine = app.suggestionEngine ?: return
         val prev = previousCommittedWord()
-        serviceScope.launch(Dispatchers.Default) {
+        serviceScope.launch(app.suggestDispatcher) {
             engine.recordCommittedWord(prev, word)
             app.scheduleHistorySave()
         }
@@ -489,6 +593,8 @@ class VBoardImeService : InputMethodService() {
                 ),
             )
         }
+        // Never open onto the previous session's (possibly another app's) text.
+        bar.resetForSession()
         animateToVoiceBar(bar)
         controller.startSession(profile.fieldKind, settings)
     }
@@ -503,7 +609,12 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun commitUtterance(index: Int, text: String) {
-            val ic = currentInputConnection ?: return
+            val ic = currentInputConnection ?: run {
+                // The editor went away before the final pass returned. Nothing to
+                // do here, but it must not be invisible in a bug report.
+                Log.w(TAG, "no input connection; dictated utterance $index dropped")
+                return
+            }
             val joined = CommitPlanner.joinForInsertion(this@VBoardImeService.precedingText(4), text)
             ic.commitText(joined, 1)
             voiceCommits[index] = joined
@@ -585,11 +696,23 @@ class VBoardImeService : InputMethodService() {
      * Returns the UI to the keyboard. [hideOnly] is used from lifecycle
      * teardown paths where the controller is already stopping (or must be
      * stopped silently); the non-hideOnly path is the controller telling us a
-     * session ended normally.
+     * session ended normally. [finalizePending] asks the controller to commit
+     * what has already been spoken instead of discarding it.
      */
-    private fun endVoiceSession(hideOnly: Boolean) {
-        if (hideOnly) voiceController?.cancelSessionSilently()
+    private fun endVoiceSession(hideOnly: Boolean, finalizePending: Boolean = false) {
+        if (hideOnly) {
+            if (finalizePending) {
+                voiceController?.finishSession()
+            } else {
+                voiceController?.cancelSessionSilently()
+            }
+        }
+        // Resetting the bar here is what stops its infinite breathing animator
+        // (the view stays attached, so onDetachedFromWindow never runs) and
+        // clears one app's transcript before it can be shown in the next.
+        voiceBar?.resetForSession()
         voiceBar?.visibility = View.GONE
+        if (!viewsReady()) return
         keyboardView.visibility = View.VISIBLE
         keyboardView.alpha = 1f
         if (!hideOnly) {
@@ -599,6 +722,7 @@ class VBoardImeService : InputMethodService() {
     }
 
     companion object {
+        private const val TAG = "VBoardIme"
         private val SENTENCE_ENDER_CHARS = setOf('.', '!', '?')
         private val ATTACHING_PUNCT = setOf('.', ',', '!', '?', ';', ':', ')', ']', '}')
     }

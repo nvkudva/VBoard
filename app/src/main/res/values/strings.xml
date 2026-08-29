@@ -13,6 +13,7 @@
     <string name="voice_error_no_permission_action">Allow</string>
     <string name="voice_error_no_model">Voice models aren\'t downloaded yet</string>
     <string name="voice_error_no_model_action">Download</string>
+    <string name="voice_error_model_corrupt">Voice models are damaged — download them again</string>
     <string name="voice_error_mic_busy">Microphone is in use by another app</string>
     <string name="voice_error_generic">Something went wrong with voice typing</string>
     <string name="voice_back_to_keyboard">Back to keyboard</string>

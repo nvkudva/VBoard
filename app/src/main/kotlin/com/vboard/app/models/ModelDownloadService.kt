@@ -8,16 +8,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.vboard.app.R
 import com.vboard.app.VBoardApp
 import com.vboard.app.onboarding.OnboardingActivity
+import com.vboard.core.model.InstallError
 import com.vboard.core.model.ModelCatalog
 import com.vboard.core.model.PackState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -29,8 +34,15 @@ import kotlinx.coroutines.launch
 class ModelDownloadService : LifecycleService() {
 
     companion object {
+        private const val TAG = "VBoardDownload"
         private const val CHANNEL_ID = "model_downloads"
         private const val NOTIFICATION_ID = 41
+        private const val MAX_NETWORK_RETRIES = 4
+        private const val RETRY_BACKOFF_MS = 3_000L
+        private const val WAKE_LOCK_TAG = "VBoard:modelDownload"
+
+        /** Safety valve: the lock is released explicitly when the drain finishes. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
         const val EXTRA_PACK_ID = "pack_id"
         const val ACTION_DOWNLOAD = "com.vboard.app.action.DOWNLOAD"
         const val ACTION_CANCEL = "com.vboard.app.action.CANCEL"
@@ -55,7 +67,19 @@ class ModelDownloadService : LifecycleService() {
 
     private val app get() = application as VBoardApp
     private var downloadJob: Job? = null
+
+    /**
+     * Pending pack ids. Guarded by [queueLock]: it was a plain ArrayDeque mutated
+     * from the main thread (onStartCommand) and an IO thread (the drain loop).
+     */
+    private val queueLock = Any()
     private val queue = ArrayDeque<String>()
+
+    /** Whether a drain loop is running. Guarded by [queueLock]. */
+    private var draining = false
+
+    /** Held while downloading so a screen-off transfer isn't killed mid-read. */
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -65,8 +89,12 @@ class ModelDownloadService : LifecycleService() {
                 enqueue(packId)
             }
             ACTION_CANCEL -> {
+                synchronized(queueLock) {
+                    queue.clear()
+                    draining = false
+                }
                 downloadJob?.cancel()
-                queue.clear()
+                releaseWakeLock()
                 stopSelf()
             }
         }
@@ -74,31 +102,108 @@ class ModelDownloadService : LifecycleService() {
     }
 
     private fun enqueue(packId: String) {
-        if (packId !in queue) queue.addLast(packId)
-        if (downloadJob?.isActive != true) {
-            goForeground()
-            downloadJob = lifecycleScope.launch(Dispatchers.IO) { drainQueue() }
+        val startDrain = synchronized(queueLock) {
+            if (packId !in queue) queue.addLast(packId)
+            if (draining) {
+                false
+            } else {
+                draining = true
+                true
+            }
         }
+        if (!startDrain) return
+        goForeground()
+        acquireWakeLock()
+        downloadJob = lifecycleScope.launch(Dispatchers.IO) { drainQueue() }
     }
 
     private suspend fun drainQueue() {
+        try {
+            while (true) {
+                val packId = synchronized(queueLock) { queue.removeFirstOrNull() }
+                if (packId == null) {
+                    // Closing the race: enqueue() only starts a drain when none is
+                    // running, but this one is still "running" here. A tap landing
+                    // in that window used to be queued with nothing to drain it,
+                    // and the download simply never started, silently. Publishing
+                    // our exit under the same lock that enqueue() takes means the
+                    // next tap either finds us still draining, or starts a drain.
+                    val done = synchronized(queueLock) {
+                        if (queue.isEmpty()) {
+                            draining = false
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (done) break else continue
+                }
+                installPack(packId)
+            }
+        } finally {
+            releaseWakeLock()
+        }
+        notifyFinished()
+        stopSelf()
+    }
+
+    private suspend fun installPack(packId: String) {
+        val pack = ModelCatalog.byId(packId) ?: return
+        var attempt = 0
+        var result: PackState = PackState.NotInstalled
         while (true) {
-            val packId = queue.removeFirstOrNull() ?: break
-            val pack = ModelCatalog.byId(packId) ?: continue
-            val result = app.packInstaller.install(pack) { state ->
+            result = app.packInstaller.install(pack) { state ->
                 publish(packId, state)
                 if (state is PackState.Downloading) {
                     updateNotification(pack.displayName, state.fraction.toFloat())
                 }
             }
-            publish(packId, result)
-            if (result == PackState.Installed) {
-                runCatching { app.modelStore.ensureExtracted(app.packInstaller, pack) }
-                    .onFailure { publish(packId, PackState.Failed(com.vboard.core.model.InstallError.IO)) }
+            val failure = (result as? PackState.Failed)?.error
+            if (failure != InstallError.NETWORK || attempt >= MAX_NETWORK_RETRIES) break
+            attempt++
+            // Retry is cheap and correct here: the .part files already on disk are
+            // resumed, so a blip half a gigabyte into a download costs a backoff
+            // rather than the whole transfer.
+            Log.w(TAG, "network failure installing $packId; retry $attempt of $MAX_NETWORK_RETRIES")
+            delay(RETRY_BACKOFF_MS * attempt)
+        }
+        publish(packId, result)
+        if (result == PackState.Installed) {
+            try {
+                app.modelStore.ensureExtracted(app.packInstaller, pack)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // ensureExtracted has already cleared the installed marker, so the
+                // UI will offer this pack for download again rather than claiming
+                // it is ready.
+                Log.e(TAG, "extraction failed for $packId", e)
+                publish(packId, PackState.Failed(InstallError.IO))
             }
         }
-        notifyFinished()
-        stopSelf()
+    }
+
+    // ------------------------------------------------------------- wake lock
+
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        wakeLock = getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+            .onFailure { Log.w(TAG, "wake lock release failed", it) }
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
     }
 
     private fun publish(packId: String, state: PackState) {

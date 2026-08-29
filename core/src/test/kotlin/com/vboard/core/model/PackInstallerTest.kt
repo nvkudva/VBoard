@@ -451,9 +451,50 @@ class PackInstallerTest {
     }
 
     @Test
-    fun `delete of a never-installed pack is a no-op`() {
+    fun `delete of a never-installed pack is a no-op`() = runTest {
         val pack = pack(listOf(spec("model.onnx", body(10))))
         installer().delete(pack) // must not throw
+        assertEquals(PackState.NotInstalled, installer().stateOf(pack))
+    }
+
+    @Test
+    fun `delete of an unreadable tree reports failure instead of throwing`() = runTest {
+        val pack = pack(listOf(serve("model.onnx", body(40))))
+        val installer = installer()
+        installer.install(pack)
+
+        // Files.walk and Files.deleteIfExists raise UncheckedIOException, which is
+        // not an IOException: it escaped install()'s catch and killed the download
+        // service's coroutine. Whatever the filesystem does here, delete() must
+        // return normally.
+        val dir = finalDir(pack)
+        val readOnly = runCatching { dir.toFile().setWritable(false) }.getOrDefault(false)
+        installer.delete(pack) // must not throw, writable or not
+        if (readOnly) dir.toFile().setWritable(true)
+        installer.delete(pack)
+        assertEquals(PackState.NotInstalled, installer.stateOf(pack))
+    }
+
+    @Test
+    fun `invalidate clears the marker so a corrupt install can be re-downloaded`() = runTest {
+        val pack = pack(listOf(serve("model.onnx", body(64))))
+        val installer = installer()
+        installer.install(pack)
+        assertEquals(PackState.Installed, installer.stateOf(pack))
+
+        // The extractor found the payload unusable. Without this the pack reports
+        // Installed forever and the only offered repair leads nowhere.
+        installer.invalidate(pack)
+
+        assertEquals(PackState.NotInstalled, installer.stateOf(pack))
+        assertNull(installer.installedDir(pack))
+        assertEquals(PackState.Installed, installer.install(pack))
+    }
+
+    @Test
+    fun `invalidate on a pack that was never installed is harmless`() {
+        val pack = pack(listOf(spec("model.onnx", body(10))))
+        installer().invalidate(pack)
         assertEquals(PackState.NotInstalled, installer().stateOf(pack))
     }
 

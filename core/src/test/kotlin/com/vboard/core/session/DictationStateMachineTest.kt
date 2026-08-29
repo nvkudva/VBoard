@@ -202,4 +202,132 @@ class DictationStateMachineTest {
         machine.reset()
         assertEquals(State.Idle, machine.state)
     }
+
+    // ------------------------------------------------------- finalize plumbing
+
+    @Test
+    fun `endpoint with speech asks the app layer to finalize exactly once`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("hello world"))
+        val first = machine.onEvent(Event.EndpointDetected)
+        assertTrue(Effect.BeginFinalize("hello world", 0) in first)
+
+        // H2: a second endpoint for the same utterance used to leave the state
+        // untouched, so the app's "am I finalizing?" check passed and a second
+        // decode committed the same words again.
+        val second = machine.onEvent(Event.EndpointDetected)
+        assertTrue(second.none { it is Effect.BeginFinalize })
+        assertEquals(State.Finalizing("hello world", 0), machine.state)
+    }
+
+    @Test
+    fun `overlapping endpoints cannot double-commit one utterance`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("only once"))
+        machine.onEvent(Event.EndpointDetected)
+        machine.onEvent(Event.EndpointDetected)
+        machine.onEvent(Event.EndpointDetected)
+        val commits = machine.onEvent(Event.FinalTranscript("Only once."))
+            .filterIsInstance<Effect.CommitUtterance>()
+        assertEquals(1, commits.size)
+        assertEquals(0, commits.single().utteranceIndex)
+    }
+
+    // ---------------------------------------------------------- deferred stop
+
+    @Test
+    fun `stop while finalizing still commits the utterance`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("last sentence"))
+        machine.onEvent(Event.EndpointDetected)
+
+        // The user taps stop after the 0.8s endpoint has already fired — the
+        // common path, since they are taught to stop talking before tapping.
+        val stopEffects = machine.onEvent(Event.StopRequested)
+        assertTrue(Effect.StopAudio in stopEffects)
+        assertTrue(Effect.HideVoiceBar !in stopEffects)
+        assertEquals(State.Finalizing("last sentence", 0, stopAfterCommit = true), machine.state)
+
+        val finalEffects = machine.onEvent(Event.FinalTranscript("Last sentence."))
+        assertTrue(Effect.CommitUtterance("Last sentence.", 0, refine = false) in finalEffects)
+        assertTrue(Effect.HideVoiceBar in finalEffects)
+        assertEquals(State.Idle, machine.state)
+    }
+
+    @Test
+    fun `deferred stop commits before it hides the bar`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("ordering matters"))
+        machine.onEvent(Event.EndpointDetected)
+        machine.onEvent(Event.StopRequested)
+        val effects = machine.onEvent(Event.FinalTranscript("Ordering matters."))
+        val commitAt = effects.indexOfFirst { it is Effect.CommitUtterance }
+        val hideAt = effects.indexOf(Effect.HideVoiceBar)
+        assertTrue(commitAt in 0 until hideAt, "commit must precede teardown: $effects")
+    }
+
+    @Test
+    fun `repeated stop while finalizing does not restart audio teardown`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("hi"))
+        machine.onEvent(Event.EndpointDetected)
+        machine.onEvent(Event.StopRequested)
+        val again = machine.onEvent(Event.StopRequested)
+        assertTrue(again.isEmpty())
+        assertEquals(State.Finalizing("hi", 0, stopAfterCommit = true), machine.state)
+    }
+
+    @Test
+    fun `deferred stop with a blank final still ends the session`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("um"))
+        machine.onEvent(Event.EndpointDetected)
+        machine.onEvent(Event.StopRequested)
+        val effects = machine.onEvent(Event.FinalTranscript(""))
+        assertTrue(effects.none { it is Effect.CommitUtterance })
+        assertTrue(Effect.HideVoiceBar in effects)
+        assertEquals(State.Idle, machine.state)
+    }
+
+    @Test
+    fun `stop while listening still ends immediately`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("mid word"))
+        val effects = machine.onEvent(Event.StopRequested)
+        assertEquals(State.Idle, machine.state)
+        assertTrue(Effect.StopAudio in effects)
+        assertTrue(Effect.HideVoiceBar in effects)
+    }
+
+    // --------------------------------------------------- models lost mid-session
+
+    @Test
+    fun `models missing while listening stops audio and reports`() {
+        val machine = startedMachine()
+        // H1: this used to fall through to a no-op, leaving the machine in
+        // Listening with the halo up, no reader loop and no way out.
+        val effects = machine.onEvent(Event.ModelsMissing)
+        assertEquals(State.Error(ErrorKind.MODEL_MISSING), machine.state)
+        assertTrue(Effect.StopAudio in effects)
+        assertTrue(Effect.SignalError(ErrorKind.MODEL_MISSING) in effects)
+    }
+
+    @Test
+    fun `models missing while finalizing stops audio and reports`() {
+        val machine = startedMachine()
+        machine.onEvent(Event.Partial("hello"))
+        machine.onEvent(Event.EndpointDetected)
+        val effects = machine.onEvent(Event.ModelsMissing)
+        assertEquals(State.Error(ErrorKind.MODEL_MISSING), machine.state)
+        assertTrue(Effect.StopAudio in effects)
+    }
+
+    @Test
+    fun `unusable models report a corrupt install, not a missing one`() {
+        val machine = DictationStateMachine()
+        machine.onEvent(Event.MicPressed)
+        val effects = machine.onEvent(Event.ModelsUnusable)
+        assertEquals(State.Error(ErrorKind.MODEL_CORRUPT), machine.state)
+        assertTrue(Effect.SignalError(ErrorKind.MODEL_CORRUPT) in effects)
+    }
 }

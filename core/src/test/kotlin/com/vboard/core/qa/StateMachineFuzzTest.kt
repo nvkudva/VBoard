@@ -29,7 +29,8 @@ import kotlin.test.assertTrue
  *  6. Leaving Listening/Finalizing for Idle always carries StopAudio.
  *  7. Entering Idle from any other state always carries HideVoiceBar.
  *  8. utteranceIndex is non-decreasing across consecutive in-session states.
- *  9. After StopRequested the machine is always Idle.
+ *  9. After StopRequested the machine is Idle, or Finalizing with the stop
+ *     deferred until the in-flight utterance commits (BL-2).
  * 10. After ErrorDismissed the machine is never stuck in Error.
  */
 class StateMachineFuzzTest {
@@ -152,9 +153,14 @@ class StateMachineFuzzTest {
                     lastIndex = null
                 }
 
-                // Invariant 9: StopRequested always lands in Idle.
+                // Invariant 9: StopRequested lands in Idle, or parks in Finalizing
+                // with the stop deferred until the in-flight utterance commits.
                 if (event == Event.StopRequested) {
-                    assertEquals(State.Idle, post, "StopRequested did not reach Idle: ${ctx()}")
+                    val deferred = post is State.Finalizing && post.stopAfterCommit
+                    assertTrue(
+                        post is State.Idle || deferred,
+                        "StopRequested neither reached Idle nor deferred: ${ctx()}",
+                    )
                 }
 
                 // Invariant 10: ErrorDismissed never leaves the machine in Error.
@@ -193,26 +199,41 @@ class StateMachineFuzzTest {
                 }
             }
             assertTrue(maxIndex > 0, "seed=$seed: biased fuzz never committed an utterance")
-            // Session still tears down cleanly from wherever it ended up.
+            // Session still tears down cleanly from wherever it ended up. Stopping
+            // mid-finalize is deferred by design, so the commit that resolves it is
+            // what completes the teardown.
             val effects = machine.onEvent(Event.StopRequested)
-            assertEquals(State.Idle, machine.state)
             assertTrue(Effect.StopAudio in effects)
-            assertTrue(Effect.HideVoiceBar in effects)
+            if (machine.state is State.Finalizing) {
+                val finalEffects = machine.onEvent(Event.FinalTranscript("tail"))
+                assertTrue(Effect.HideVoiceBar in finalEffects)
+            } else {
+                assertTrue(Effect.HideVoiceBar in effects)
+            }
+            assertEquals(State.Idle, machine.state)
         }
     }
 
     @Test
-    fun `stop during finalizing stops audio and hides the bar`() {
+    fun `stop during finalizing cuts the mic but defers teardown to the commit`() {
         val machine = DictationStateMachine()
         machine.onEvent(Event.MicPressed)
         machine.onEvent(Event.ModelsReady)
         machine.onEvent(Event.Partial("in flight"))
         machine.onEvent(Event.EndpointDetected)
         assertTrue(machine.state is State.Finalizing)
-        val effects = machine.onEvent(Event.StopRequested)
+
+        val stopEffects = machine.onEvent(Event.StopRequested)
+        // The mic goes quiet immediately, but the bar stays up: hiding it here is
+        // what used to lose the sentence the user had just watched appear.
+        assertTrue(Effect.StopAudio in stopEffects)
+        assertTrue(Effect.HideVoiceBar !in stopEffects)
+        assertTrue(machine.state is State.Finalizing)
+
+        val finalEffects = machine.onEvent(Event.FinalTranscript("In flight."))
+        assertTrue(Effect.CommitUtterance("In flight.", 0, refine = false) in finalEffects)
+        assertTrue(Effect.HideVoiceBar in finalEffects)
         assertEquals(State.Idle, machine.state)
-        assertTrue(Effect.StopAudio in effects)
-        assertTrue(Effect.HideVoiceBar in effects)
     }
 
     @Test

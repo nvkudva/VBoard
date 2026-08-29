@@ -142,6 +142,23 @@ class VoiceBarView(
         invalidate()
     }
 
+    /**
+     * Called when a session starts or ends. The bar is long-lived and merely
+     * hidden between sessions, so without this two things persist that must not:
+     * the previous app's dictated text is still on screen when the bar opens
+     * somewhere else, and the infinite breathing animator keeps posting
+     * Choreographer frames for the life of the process (nothing else reaches
+     * stopBreathing except the error path and detach, and teardown does neither).
+     */
+    fun resetForSession() {
+        stopBreathing()
+        mode = Mode.LISTENING
+        errorMessage = ""
+        amplitude = 0f
+        haloLevel = 0f
+        resetTranscript()
+    }
+
     private fun startBreathing() {
         if (!breathAnimator.isStarted) breathAnimator.start()
     }

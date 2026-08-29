@@ -111,6 +111,14 @@ class KeyboardView(
     private val handler2 = Handler(Looper.getMainLooper())
     private var popup: KeyPopup? = null
     private var longPressFired = false
+
+    /**
+     * Set when a key already emitted its action on ACTION_DOWN (backspace, which
+     * fires immediately and then repeats). Without it the release path saw no
+     * long-press and ran handleTap as well, so one tap deleted two characters —
+     * and an autocorrect revert lost a letter, "the" -> "teh" -> "te".
+     */
+    private var actionFiredOnDown = false
     private val longPressRunnable = Runnable { onLongPress() }
     private var repeatRunnable: Runnable? = null
 
@@ -355,6 +363,7 @@ class KeyboardView(
                 val kb = keyAt(event.x, event.y) ?: return true
                 pressedKey = kb
                 longPressFired = false
+                actionFiredOnDown = false
                 invalidate()
                 if (hapticsEnabled) {
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -363,7 +372,12 @@ class KeyboardView(
                     showPreview(kb)
                 }
                 when {
-                    kb.key.action == KeyAction.Backspace -> startRepeat()
+                    kb.key.action == KeyAction.Backspace -> {
+                        // Backspace deletes on press and then auto-repeats, so the
+                        // release must not emit it a second time.
+                        actionFiredOnDown = true
+                        startRepeat()
+                    }
                     kb.key.action == KeyAction.Space -> {
                         spaceDragOriginX = event.x
                         spaceDragSteps = 0
@@ -406,12 +420,13 @@ class KeyboardView(
                     val chosen = selector.selectedCandidate()
                     dismissPopup()
                     if (chosen != null) listener?.onKeyLongPressText(chosen)
-                } else if (kb != null && !longPressFired && !spaceDragging) {
+                } else if (kb != null && !longPressFired && !spaceDragging && !actionFiredOnDown) {
                     dismissPopup()
                     handleTap(kb.key)
                 } else {
                     dismissPopup()
                 }
+                actionFiredOnDown = false
                 spaceDragging = false
                 pressedKey = null
                 invalidate()
@@ -421,6 +436,7 @@ class KeyboardView(
                 cancelTimers()
                 dismissPopup()
                 pressedKey = null
+                actionFiredOnDown = false
                 spaceDragging = false
                 invalidate()
                 return true
