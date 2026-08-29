@@ -340,7 +340,7 @@ class VoiceSessionController(
                 // A call can take the microphone without a focus callback ever
                 // arriving (or before it does), and a silent AudioRecord looks
                 // exactly like a quiet room. Poll for it.
-                if (focus.isCallActive()) {
+                if (focus.callStarted()) {
                     focus.reportCallActive()
                     break
                 }
@@ -447,6 +447,9 @@ class VoiceSessionController(
      * join is a native use-after-free, not a dropped chunk.
      */
     private fun stopAudio() {
+        // Only the first stop of a live session logs, so the two teardown paths
+        // (StopAudio then HideVoiceBar) do not report the same session twice.
+        if (monitorJob != null) logDropSummary()
         monitorJob?.cancel()
         monitorJob = null
         val reader = audioJob
@@ -469,6 +472,22 @@ class VoiceSessionController(
             }
             withContext(audioDispatcher) { capture.release() }
         }
+    }
+
+    /**
+     * One line per session when the streaming decoder lost audio, so a session
+     * too short to have ticked a report still leaves a trace. Counts only.
+     */
+    private fun logDropSummary() {
+        val pipe = pipeline ?: return
+        if (pipe.droppedSamples <= 0L && pipe.evictedSamples <= 0L) return
+        val ms = pipe.droppedSamples * 1_000L / AudioCapture.SAMPLE_RATE
+        Log.w(
+            TAG,
+            "session captured ${pipe.producedSamples} samples; the streaming decoder " +
+                "missed ${pipe.droppedSamples} of them (~${ms}ms in ${pipe.droppedChunkCount} " +
+                "chunks) and the final pass missed ${pipe.evictedSamples}",
+        )
     }
 
     // ---------------------------------------------------- utterance buffer

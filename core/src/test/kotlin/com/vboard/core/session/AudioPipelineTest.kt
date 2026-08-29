@@ -271,8 +271,12 @@ class AudioPipelineTest {
         val kept = pipeline.takeAllUtterance()
         assertEquals(4 * CHUNK, kept.size)
         assertEquals((6L * CHUNK).toFloat(), kept.first(), "the newest audio is what is kept")
-        // Eviction is a loss like any other and is reported as one.
-        assertTrue(pipeline.droppedSamples >= 6L * CHUNK)
+        // Eviction is a loss like any other and is reported as one — but
+        // counted apart from decode drops, because this is the only kind that
+        // reaches the final pass.
+        assertEquals(6L * CHUNK, pipeline.evictedSamples)
+        assertEquals(0L, pipeline.droppedSamples)
+        assertEquals(6 * CHUNK, pipeline.drainDroppedSamples())
     }
 
     @Test

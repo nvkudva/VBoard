@@ -67,6 +67,7 @@ class AudioPipeline(
     private val queued = AtomicInteger(0)
     private val produced = AtomicLong(0)
     private val droppedTotal = AtomicLong(0)
+    private val evictedTotal = AtomicLong(0)
     private val droppedPending = AtomicInteger(0)
     private val droppedChunks = AtomicInteger(0)
 
@@ -87,8 +88,17 @@ class AudioPipeline(
 
     val producedSamples: Long get() = produced.get()
     val queuedSamples: Int get() = queued.get()
+    /** Samples that never reached the streaming decoder. */
     val droppedSamples: Long get() = droppedTotal.get()
     val droppedChunkCount: Int get() = droppedChunks.get()
+
+    /**
+     * Samples evicted from the utterance buffer because it hit its cap — the
+     * only way audio is ever lost to the *final* pass, and only when the mic has
+     * been hot far longer than any real utterance. Counted separately so a log
+     * line can tell "the partial degraded" from "the transcript lost audio".
+     */
+    val evictedSamples: Long get() = evictedTotal.get()
 
     val bufferedUtteranceSamples: Int get() = synchronized(utteranceLock) { utteranceSamples }
 
@@ -219,7 +229,7 @@ class AudioPipeline(
             evicted += head.size
         }
         if (evicted > 0) {
-            droppedTotal.addAndGet(evicted.toLong())
+            evictedTotal.addAndGet(evicted.toLong())
             droppedPending.addAndGet(evicted)
         }
         evicted

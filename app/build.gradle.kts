@@ -107,3 +107,36 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+// ------------------------------------------------------------------ unit tests
+// Bootstrap of the first JVM test source set in :app (app/src/test). Robolectric
+// and Espresso were already declared but nothing had ever been compiled against
+// them, so the wiring below is what makes `:app:testDebugUnitTest` actually run.
+//
+// Two engines on purpose: this module runs the JUnit Platform (junit-jupiter),
+// while Robolectric is a JUnit 4 runner and cannot be driven by Jupiter. The
+// vintage engine runs the @RunWith(RobolectricTestRunner) classes alongside
+// plain Jupiter ones, so a test that needs no Android framework does not have to
+// pay for a Robolectric sandbox.
+//
+// Versions are literals rather than catalog aliases so this hunk touches only
+// this file; fold them into gradle/libs.versions.toml when the catalog is next
+// edited (junit4 4.13.2, junit-platform 1.11.3 == junit-jupiter 5.11.3).
+android {
+    testOptions {
+        // Robolectric needs the merged resources and the manifest to build its
+        // application under test.
+        unitTests.isIncludeAndroidResources = true
+        // Non-Robolectric tests get stubbed android.jar returns instead of
+        // "Method ... not mocked" for the odd incidental framework call.
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // ApplicationProvider and friends for Robolectric tests.
+    testImplementation(libs.androidx.junit)
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.3")
+}

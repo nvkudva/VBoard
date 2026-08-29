@@ -48,6 +48,9 @@ class AudioFocusGuard(
     /** Guards against reporting one interruption through both signals. */
     private var reported = false
 
+    /** Whether the audio mode already looked like a call when this session began. */
+    private var callModeAtStart = false
+
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         if (isLosingMicrophone(change)) report(Reason.FOCUS_LOST)
     }
@@ -60,9 +63,11 @@ class AudioFocusGuard(
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )
-            // We never play audio, so there is nothing to duck; say so rather
-            // than letting the framework wait for a fade-out that never comes.
-            .setWillPauseWhenDucked(true)
+            // setWillPauseWhenDucked is deliberately left at false. Setting it
+            // converts every duckable interruption into AUDIOFOCUS_LOSS_TRANSIENT
+            // — which we treat as "the microphone is gone" — so a notification
+            // chime would end the user's dictation. We play nothing, so there is
+            // nothing to duck and nothing to pause.
             .setOnAudioFocusChangeListener(listener, mainHandler)
             .build()
 
@@ -78,6 +83,7 @@ class AudioFocusGuard(
     fun request(): Boolean {
         val manager = audioManager ?: return false
         reported = false
+        callModeAtStart = isCallActive()
         val result = runCatching { manager.requestAudioFocus(focusRequest) }
             .onFailure { Log.w(TAG, "audio focus request failed", it) }
             .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
@@ -110,6 +116,17 @@ class AudioFocusGuard(
             mode == AudioManager.MODE_IN_COMMUNICATION ||
             mode == AudioManager.MODE_RINGTONE
     }
+
+    /**
+     * True when a call has begun *since this session started*.
+     *
+     * The transition matters: some devices are slow to leave
+     * MODE_IN_COMMUNICATION after a VoIP call ends, and treating a stale mode as
+     * an interruption would kill a dictation that never had a call at all. If
+     * the mode was already call-like when we started, the microphone was never
+     * ours to begin with and the capture stall watchdog is the right reporter.
+     */
+    fun callStarted(): Boolean = isCallActive() && !callModeAtStart
 
     /** Reports a call detected by the poller; deduplicated against focus loss. */
     fun reportCallActive() = report(Reason.CALL_ACTIVE)
