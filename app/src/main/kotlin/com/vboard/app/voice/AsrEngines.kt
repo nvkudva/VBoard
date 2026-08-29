@@ -13,6 +13,7 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.vboard.app.models.ModelStore
+import com.vboard.core.text.RecognizerCase
 
 /**
  * Thin wrappers around sherpa-onnx so the rest of the app never touches its
@@ -55,7 +56,12 @@ class StreamingAsr(paths: ModelStore.SpeechModelPaths) {
         }
     }
 
-    fun partialText(): String = recognizer.getResult(stream).text
+    /**
+     * [RecognizerCase] here rather than at the display: this model decodes
+     * against an uppercase token table, and the partial is not only shown in the
+     * voice bar — it is what gets committed when the final pass fails.
+     */
+    fun partialText(): String = RecognizerCase.normalize(recognizer.getResult(stream).text)
 
     fun isEndpoint(): Boolean = recognizer.isEndpoint(stream)
 
@@ -95,7 +101,9 @@ class FinalAsr(paths: ModelStore.SpeechModelPaths) {
         return try {
             stream.acceptWaveform(samples, AudioCapture.SAMPLE_RATE)
             recognizer.decode(stream)
-            recognizer.getResult(stream).text
+            // A no-op for a model that already returns mixed case, which this
+            // one does; it is here so a model swap cannot start shouting.
+            RecognizerCase.normalize(recognizer.getResult(stream).text)
         } finally {
             runCatching { stream.release() }
         }
