@@ -1,16 +1,26 @@
 name: Release
 
-# Publishing is driven entirely by tags: push v1.2.3 (or v1.2.3-alpha.1) and this
-# builds a signed APK and attaches it to a GitHub Release. Pre-release tags are
-# marked as such automatically.
+# Publishing is driven by tags: push v1.2.3 (or v1.2.3-alpha.1) and this builds a
+# signed APK and attaches it to a GitHub Release. Pre-release tags are marked as
+# such automatically.
+#
+# A manual run can also create the tag first, by naming the branch or commit to
+# cut it from in "ref". That exists for callers who can push branches but not
+# tags — an agent session, or anyone working through the Actions UI. It is
+# deliberately additive only: a tag that already exists is never moved or
+# overwritten, so a published release cannot be rewritten from here.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build and publish (must already exist)"
+        description: "Tag to build and publish"
         required: true
+      ref:
+        description: "Branch or commit to create the tag at. Leave empty to build an existing tag."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -22,7 +32,35 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          # When "ref" is given the tag does not exist yet, so check out the
+          # commit it is about to be cut from.
+          ref: ${{ github.event.inputs.ref || github.event.inputs.tag || github.ref }}
+          # The tag has to be pushed from this checkout, and the existence check
+          # below needs the remote's tags.
+          fetch-depth: 0
+
+      - name: Create the tag
+        if: ${{ github.event.inputs.ref != '' }}
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::Tag must start with v; got $TAG." ; exit 1 ;;
+          esac
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            # Moving a tag rewrites what a published release points at, and
+            # anyone who already downloaded that APK has no way to know. Pick a
+            # new version instead.
+            echo "::error::$TAG already exists. Tags are never moved; use a new version."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          # A tag pushed with GITHUB_TOKEN does not re-trigger this workflow's
+          # push trigger, so this run stays the only build of it.
+          git push origin "refs/tags/$TAG"
 
       - uses: actions/setup-java@v6
         with:
