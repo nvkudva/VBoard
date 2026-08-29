@@ -63,11 +63,14 @@ class RefinementValidatorTest {
 
     @Test
     fun `leaked chat scaffolding is rejected`() {
+        // Known end-of-turn markers are trimmed (see the acceptance case above);
+        // anything else that still smells of the template is thrown away rather
+        // than guessed at.
         assertEquals(
             RejectReason.TEMPLATE_LEAK,
             reject(
                 "the meeting is tomorrow morning",
-                "The meeting is tomorrow morning. <|im_start|>user",
+                "The meeting is tomorrow morning.<|assistant|>",
             ),
         )
     }

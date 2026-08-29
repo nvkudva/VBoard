@@ -167,9 +167,13 @@ object RefinementValidator {
         val originalStart = normalizeForPrefix(original)
         return COMMENTARY_PREFIXES.any { prefix ->
             val normalized = normalizeForPrefix(prefix)
-            candidateStart.startsWith(normalized) && !originalStart.startsWith(normalized)
+            startsWithWord(candidateStart, normalized) && !startsWithWord(originalStart, normalized)
         }
     }
+
+    /** Prefix match on a whole-word boundary, so "surely" is not "sure". */
+    private fun startsWithWord(text: String, prefix: String): Boolean =
+        text == prefix || text.startsWith("$prefix ")
 
     /**
      * Folds away the punctuation and casing the model may have added, so a user

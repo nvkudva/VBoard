@@ -82,19 +82,25 @@ class FixChunkerTest {
     }
 
     @Test
-    fun `inter-sentence whitespace is held out of the model's reach`() {
-        val text = "First one.   Second one.\n\nThird one."
+    fun `whitespace at chunk boundaries is held out of the model's reach`() {
+        val text = "  First one.   Second one.\n\nThird one.  "
         val segments = FixChunker.split(text)
-        // Whatever the model returns for each body, the joins are ours.
+        // Whatever the model returns for each body, the edges stay ours.
         val rewritten = FixChunker.assemble(segments, segments.map { "X" })
         assertEquals(segments.size, rewritten.count { it == 'X' })
-        assertTrue("\n\n" in rewritten, "paragraph break lost: <$rewritten>")
+        assertTrue(rewritten.startsWith("  "), "leading whitespace lost: <$rewritten>")
+        assertTrue(rewritten.endsWith("  "), "trailing whitespace lost: <$rewritten>")
+        segments.forEach {
+            val body = it.body()
+            assertFalse(body.first().isWhitespace(), "chunk body starts with whitespace")
+            assertFalse(body.last().isWhitespace(), "chunk body ends with whitespace")
+        }
     }
 
     @Test
     fun `assemble refuses a mismatched body count`() {
         val segments = FixChunker.split("One. Two.")
-        val failure = runCatching { FixChunker.assemble(segments, listOf("only one")) }
+        val failure = runCatching { FixChunker.assemble(segments, segments.map { "x" } + "extra") }
         assertTrue(failure.isFailure)
     }
 
