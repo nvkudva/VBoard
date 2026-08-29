@@ -11,11 +11,11 @@ interface ILlmRefiner {
     boolean preload();
 
     /** Dictation refinement; null when it fails, times out, or looks wrong. */
-    String refine(in String text, in long timeoutMs);
+    String refine(String text, long timeoutMs);
 
     /**
      * "AI fix" correction. Returns a Bundle with "text" (String, present on
      * success) or "failure" (String, a SmartFailure name).
      */
-    Bundle correct(in String text, in long timeoutMs);
+    Bundle correct(String text, long timeoutMs);
 }

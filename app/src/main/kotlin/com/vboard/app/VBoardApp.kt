@@ -38,7 +38,7 @@ class VBoardApp : Application(), Configuration.Provider {
      * (V2_PLAN Wave 0.5).
      */
     private val isKeyboardProcess: Boolean
-        get() = processName == packageName
+        get() = Application.getProcessName() == packageName
 
     /**
      * WorkManager is initialized on demand rather than by androidx.startup (see

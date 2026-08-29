@@ -39,27 +39,29 @@ class LlmRefinerService : Service() {
 
     private val binder = object : ILlmRefiner.Stub() {
 
-        override fun preload(): Boolean = synchronized(engineLock) {
-            val engine = engineOrNull() ?: return false
-            runBlocking { engine.preload() }
-            true
+        override fun preload(): Boolean {
+            synchronized(engineLock) {
+                val engine = engineOrNull() ?: return false
+                runBlocking { engine.preload() }
+            }
+            return true
         }
 
         override fun refine(text: String?, timeoutMs: Long): String? {
             val input = text ?: return null
-            return synchronized(engineLock) {
+            synchronized(engineLock) {
                 val engine = engineOrNull() ?: return null
-                runBlocking { engine.refine(input, timeoutMs) }
+                return runBlocking { engine.refine(input, timeoutMs) }
             }
         }
 
         override fun correct(text: String?, timeoutMs: Long): Bundle {
             val input = text ?: return failure(SmartFailure.ERROR)
-            return synchronized(engineLock) {
+            synchronized(engineLock) {
                 val engine = engineOrNull() ?: return failure(SmartFailure.LOAD_FAILED)
                 val out = runBlocking { engine.correct(input, timeoutMs) }
                 val corrected = out.text()
-                if (corrected.isNullOrEmpty()) {
+                return if (corrected.isNullOrEmpty()) {
                     failure(out.failure ?: SmartFailure.ERROR)
                 } else {
                     Bundle().apply { putString(KEY_TEXT, corrected) }
