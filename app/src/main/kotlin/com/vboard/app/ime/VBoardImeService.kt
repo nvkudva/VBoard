@@ -413,11 +413,10 @@ class VBoardImeService : InputMethodService() {
         val ic = currentInputConnection ?: return
         clipboard.dismissChip()
         finishComposing(applyAutocorrect = false)
-        val action = profile.imeActionId
-        if (!profile.isMultiline && action != EditorInfo.IME_ACTION_NONE &&
-            action != EditorInfo.IME_ACTION_UNSPECIFIED
-        ) {
-            ic.performEditorAction(action)
+        // EditorProfile has already decided whether this field wants its action
+        // (Go, Search, Send, Next, Previous, Done) or a literal newline.
+        if (profile.performsImeAction) {
+            ic.performEditorAction(profile.imeActionId)
         } else {
             ic.commitText("\n", 1)
         }

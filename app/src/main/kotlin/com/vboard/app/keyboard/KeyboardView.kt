@@ -349,6 +349,24 @@ class KeyboardView(
                 p.close()
                 canvas.drawPath(p, iconFillPaint)
             }
+            KeyIcon.GO -> {
+                drawArrow(canvas, cx, cy, s, pointsRight = true)
+            }
+            KeyIcon.NEXT -> {
+                drawArrow(canvas, cx - s * 0.15f, cy, s * 0.85f, pointsRight = true)
+                canvas.drawLine(cx + s * 0.8f, cy - s * 0.6f, cx + s * 0.8f, cy + s * 0.6f, iconPaint)
+            }
+            KeyIcon.PREVIOUS -> {
+                drawArrow(canvas, cx + s * 0.15f, cy, s * 0.85f, pointsRight = false)
+                canvas.drawLine(cx - s * 0.8f, cy - s * 0.6f, cx - s * 0.8f, cy + s * 0.6f, iconPaint)
+            }
+            KeyIcon.DONE -> {
+                val p = android.graphics.Path()
+                p.moveTo(cx - s * 0.8f, cy)
+                p.lineTo(cx - s * 0.2f, cy + s * 0.6f)
+                p.lineTo(cx + s * 0.8f, cy - s * 0.6f)
+                canvas.drawPath(p, iconPaint)
+            }
             KeyIcon.MIC -> {
                 val mw = s * 0.42f
                 canvas.drawRoundRect(
@@ -374,6 +392,17 @@ class KeyboardView(
             }
             KeyIcon.NONE -> Unit
         }
+    }
+
+    /** Shaft plus head, drawn horizontally; [s] is the half-length of the shaft. */
+    private fun drawArrow(canvas: Canvas, cx: Float, cy: Float, s: Float, pointsRight: Boolean) {
+        val dir = if (pointsRight) 1f else -1f
+        canvas.drawLine(cx - s * dir, cy, cx + s * dir, cy, iconPaint)
+        val p = android.graphics.Path()
+        p.moveTo(cx + (s - s * 0.55f) * dir, cy - s * 0.5f)
+        p.lineTo(cx + s * dir, cy)
+        p.lineTo(cx + (s - s * 0.55f) * dir, cy + s * 0.5f)
+        canvas.drawPath(p, iconPaint)
     }
 
     // ------------------------------------------------------------------ touch
@@ -713,8 +742,12 @@ class KeyboardView(
             KeyAction.Mic -> context.getString(R.string.a11y_mic_key)
             KeyAction.Backspace -> context.getString(R.string.a11y_backspace)
             KeyAction.Enter -> when (enterIcon) {
+                KeyIcon.GO -> context.getString(R.string.a11y_enter_go)
                 KeyIcon.SEARCH -> context.getString(R.string.a11y_enter_search)
                 KeyIcon.SEND -> context.getString(R.string.a11y_enter_send)
+                KeyIcon.NEXT -> context.getString(R.string.a11y_enter_next)
+                KeyIcon.PREVIOUS -> context.getString(R.string.a11y_enter_previous)
+                KeyIcon.DONE -> context.getString(R.string.a11y_enter_done)
                 else -> context.getString(R.string.a11y_enter)
             }
             KeyAction.Space -> context.getString(R.string.a11y_space)
