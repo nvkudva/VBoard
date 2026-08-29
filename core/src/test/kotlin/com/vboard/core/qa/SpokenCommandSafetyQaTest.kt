@@ -93,11 +93,11 @@ class SpokenCommandSafetyQaTest {
             // often than a sentence boundary.
             "menstrual period tracking" to "Menstrual period tracking.",
             // "hashtag" is back in the conversion table by explicit human decision;
-            // deleting it had removed the only way to dictate "#" at all. The right
-            // spacing ("Use # now") is still open: Tokenizer.render classes "#" with
-            // "@" and "(" as a prefix that attaches to the next token, and that
-            // classification lives in Tokens.kt, which this package does not own.
-            "use hashtag now" to "Use #now",
+            // deleting it had removed the only way to dictate "#" at all. It is now
+            // spaced on both sides: Tokenizer.render used to class "#" with "@" and
+            // "(" as a prefix that attaches to the next token, which is why this
+            // read "Use #now". "@" keeps that prefix behaviour; "#" no longer does.
+            "use hashtag now" to "Use # now",
             // Inline marks mid-utterance still convert: this is the intended use.
             "put comma here" to "Put, here",
             "use colon here" to "Use: here",
@@ -134,9 +134,7 @@ class SpokenCommandSafetyQaTest {
         assertEquals("Use: here", text("use colon here"))
         assertEquals("Press - now", text("press dash now"))
         assertEquals("Email me at john @gmail dot com.", text("email me at john at sign gmail dot com"))
-        // "#" is the one converted symbol that is still not spaced on its right
-        // ("Use #now"): render classes it with "@" as a prefix, and that table is in
-        // Tokens.kt. Pinned as-is in the map above so the fix is a visible diff.
+        assertEquals("Use # now", text("use hashtag now"))
         // Position 0 is where normalizePunctuationSequence drops a leading mark, so
         // the words that became it would vanish with it. No punctuation converts
         // there, and every word survives.

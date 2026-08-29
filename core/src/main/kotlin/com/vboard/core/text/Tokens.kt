@@ -141,7 +141,7 @@ object Tokenizer {
     fun render(tokens: List<Tok>): String {
         val sb = StringBuilder()
         var quoteOpen = false
-        var pendingNoSpace = false // set when next token should attach directly (open quote, @, #)
+        var pendingNoSpace = false // set when next token should attach directly (open quote, @, ()
 
         fun needsSpace(): Boolean {
             if (sb.isEmpty()) return false
@@ -183,12 +183,15 @@ object Tokenizer {
                                 pendingNoSpace = true
                             }
                         }
-                        "@", "#", "(" -> {
+                        "@", "(" -> {
                             if (needsSpace()) sb.append(' ')
                             sb.append(tok.text)
                             pendingNoSpace = true
                         }
-                        "-", "&" -> {
+                        // "#" is spaced on both sides, not prefix-attached like "@".
+                        // Dictated "hashtag" is a spoken symbol, and gluing it right
+                        // produced "Use #now" from "use hashtag now" (VB-QA-18).
+                        "-", "&", "#" -> {
                             if (needsSpace()) sb.append(' ')
                             sb.append(tok.text)
                             pendingNoSpace = false

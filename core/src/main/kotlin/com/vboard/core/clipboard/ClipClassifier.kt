@@ -71,7 +71,7 @@ object ClipClassifier {
         if (OTP_PATTERN.matches(visible.trim())) {
             return ClipDecision.Keep(ClipClass.SESSION_ONLY)
         }
-        if (containsPaymentCard(visible) || PEM_PATTERN.containsMatchIn(text)) {
+        if (containsPaymentCard(visible) || PEM_PATTERN.containsMatchIn(visible)) {
             return ClipDecision.Keep(ClipClass.SESSION_ONLY)
         }
         return ClipDecision.Keep(ClipClass.NORMAL)
