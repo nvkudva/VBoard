@@ -90,8 +90,15 @@ class VBoardApp : Application() {
         packInstaller = PackInstaller(
             rootDir = modelStore.rootDir.toPath(),
             fetcher = AndroidFetcher(),
-            freeBytes = { filesDir.usableSpace },
+            // The volume the packs actually land on, which is no longer
+            // necessarily the one filesDir is on.
+            freeBytes = { modelStore.rootDir.usableSpace },
         )
+        // Packs installed by an older build still live in app data, which an
+        // uninstall would take with it. Moving ~1GB is not startup work: this
+        // process keeps reading them where they are and the copy is picked up on
+        // the next start.
+        appScope.launch(Dispatchers.IO) { modelStore.migrateFromInternalStorage() }
         appScope.launch(suggestDispatcher) {
             val history = if (historyFile.exists()) {
                 runCatching { UserHistory.restore(historyFile.readText()) }

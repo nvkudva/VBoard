@@ -1,6 +1,7 @@
 package com.vboard.app.models
 
 import android.content.Context
+import android.os.Environment
 import android.util.Log
 import com.vboard.core.model.ModelCatalog
 import com.vboard.core.model.ModelKind
@@ -19,12 +20,40 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Knows where model packs live on disk and how to unpack downloaded archives.
- * Layout: filesDir/models/<packId>/v<N>/<archive> plus an "extracted/" dir once
- * the archive has been unpacked.
+ * Layout: <root>/<packId>/v<N>/<archive> plus an "extracted/" dir once the
+ * archive has been unpacked.
+ *
+ * ## Where the root is, and why it moved
+ *
+ * The packs are around a gigabyte and cost the user a long download on a good
+ * connection. `filesDir` is wiped by the package manager on uninstall, so
+ * reinstalling — or sideloading the next alpha after uninstalling this one —
+ * made them pay for all of it again.
+ *
+ * They now live in the app's external **media** directory
+ * (`Android/media/<pkg>/models`), which is a real filesystem path that
+ * sherpa-onnx can open directly, needs no permission on any supported API level,
+ * and on most devices outlives an uninstall. It is not a guarantee: Android
+ * documents the media directory as app-specific storage, and some versions and
+ * OEMs do remove it. Treat surviving uninstall as the common case, not a
+ * promise — nothing here breaks if the directory is gone, the packs simply
+ * download again.
+ *
+ * Internal storage stays the fallback for a device with no usable external
+ * volume, and packs already installed there are migrated across once, in the
+ * background, by [migrateFromInternalStorage].
  */
 class ModelStore(context: Context) {
 
-    val rootDir: File = File(context.filesDir, "models")
+    private val appContext: Context = context.applicationContext
+
+    private val internalRoot: File = File(appContext.filesDir, DIR_NAME)
+
+    /** Where packs are read from and written to for the life of this process. */
+    val rootDir: File = chooseRoot(appContext, internalRoot)
+
+    /** True when [rootDir] is the one that (usually) survives an uninstall. */
+    val isOutsideAppData: Boolean = rootDir != internalRoot
 
     /**
      * One lock per pack id. [ensureExtracted] is called both by the download
@@ -275,11 +304,133 @@ class ModelStore(context: Context) {
         }
     }
 
+    /**
+     * Copies packs installed under the old internal root to [rootDir], once.
+     *
+     * Call off the main thread. It is a copy, never a move: the running process
+     * is still reading models out of the internal root (see [chooseRoot]), and
+     * the originals are reclaimed on the next start, when the external copy is
+     * the one being used. A partial copy is never activated — it is staged under
+     * a process-unique name and renamed into place — so an interrupted migration
+     * costs disk, not models.
+     */
+    fun migrateFromInternalStorage() {
+        if (isOutsideAppData) {
+            // Already running on the external root: this start is the one that
+            // gets to reclaim whatever the previous migration left behind.
+            if (internalRoot.exists() && hasPacks(rootDir)) deleteQuietly(internalRoot)
+            return
+        }
+        val external = externalRoot(appContext) ?: return
+        if (external.exists() && hasPacks(external)) return
+        if (!hasPacks(internalRoot)) return
+
+        val needed = internalRoot.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val volume = external.parentFile ?: external
+        if (volume.usableSpace < needed + MIGRATION_HEADROOM_BYTES) {
+            Log.w(TAG, "not enough room on the external volume to move the models")
+            return
+        }
+
+        // Every process runs this (keyboard, settings, the download worker), and
+        // two of them copying a gigabyte at once helps nobody. Whoever gets the
+        // lock does the work; the others come back on their next start.
+        val lockFile = File(external.parentFile, "$DIR_NAME.migrating")
+        FileChannel.open(
+            lockFile.toPath(),
+            StandardOpenOption.CREATE,
+            StandardOpenOption.WRITE,
+        ).use { channel ->
+            val lock = runCatching { channel.tryLock() }.getOrNull() ?: return
+            lock.use { copyInternalRootTo(external) }
+        }
+    }
+
+    /**
+     * Copies pack by pack, each through its own staging directory renamed into
+     * place. Pack granularity is what makes an interrupted migration useful: the
+     * packs that made it are already usable, and the rest are picked up next
+     * time, rather than a gigabyte of work being thrown away.
+     */
+    private fun copyInternalRootTo(external: File) {
+        val packDirs = internalRoot.listFiles()?.filter { it.isDirectory }.orEmpty()
+        var moved = 0
+        for (packDir in packDirs) {
+            val target = File(external, packDir.name)
+            if (target.exists()) continue
+            val staging = File(external, "$STAGING_PREFIX${android.os.Process.myPid()}-${packDir.name}")
+            deleteQuietly(staging)
+            try {
+                if (!packDir.copyRecursively(staging, overwrite = true)) {
+                    throw IOException("copy did not complete")
+                }
+                syncDir(staging)
+                if (!staging.renameTo(target)) throw IOException("cannot activate the copy")
+                moved++
+            } catch (e: Throwable) {
+                Log.w(TAG, "could not migrate pack ${packDir.name}", e)
+                deleteQuietly(staging)
+            }
+        }
+        if (moved > 0) {
+            syncDir(external)
+            Log.i(TAG, "migrated $moved pack(s) out of app data; originals go on the next start")
+        }
+    }
+
     private companion object {
         const val TAG = "VBoardModels"
+        const val DIR_NAME = "models"
+        const val MIGRATION_HEADROOM_BYTES = 50_000_000L
         const val EXTRACTED_DIR = "extracted"
         const val EXTRACTED_STAGING = "extracted.staging"
         const val COMPLETE_MARKER = ".complete"
         val MARKER_CONTENT = "ok".toByteArray()
+
+        /**
+         * The media directory is indexed by MediaStore; without this, a model
+         * graph can be offered to the user as a media file to open or share.
+         */
+        const val NOMEDIA = ".nomedia"
+
+        /** Dot-prefixed so [hasPacks] cannot mistake an in-flight copy for a pack. */
+        const val STAGING_PREFIX = ".staging-"
+
+        /**
+         * External when it is usable, but never mid-flight: a process that
+         * already has packs on internal storage keeps reading them from there
+         * until [migrateFromInternalStorage] has copied them across, so the mic
+         * never reports "not installed" for models that are on the device.
+         */
+        fun chooseRoot(context: Context, internalRoot: File): File {
+            val external = externalRoot(context) ?: return internalRoot
+            if (hasPacks(external)) return external
+            if (hasPacks(internalRoot)) return internalRoot
+            return external
+        }
+
+        /**
+         * `Android/media/<pkg>/models` on the primary volume, or null when there
+         * is no mounted external storage to put it on.
+         */
+        fun externalRoot(context: Context): File? {
+            val media = context.externalMediaDirs.firstOrNull() ?: return null
+            if (Environment.getExternalStorageState(media) != Environment.MEDIA_MOUNTED) return null
+            val root = File(media, DIR_NAME)
+            if (!root.exists() && !root.mkdirs() && !root.isDirectory) return null
+            val marker = File(root, NOMEDIA)
+            if (!marker.exists()) runCatching { marker.createNewFile() }
+            return root
+        }
+
+        /**
+         * A root "has packs" when a pack directory has been installed under it.
+         * Dot-prefixed entries are excluded on purpose: a migration in flight
+         * leaves staging directories here, and counting one of those would point
+         * the next process at a root whose models have not arrived yet.
+         */
+        fun hasPacks(root: File): Boolean =
+            root.isDirectory &&
+                root.listFiles()?.any { it.isDirectory && !it.name.startsWith(".") } == true
     }
 }
