@@ -25,6 +25,10 @@ class AndroidFetcher : Fetcher {
             }
             connection.connect()
             val code = connection.responseCode
+            if (code == RANGE_NOT_SATISFIABLE && rangeStart > 0) {
+                // Nothing left to fetch: the local .part already holds the whole file.
+                return@withContext
+            }
             if (code !in 200..299) throw IOException("HTTP $code for $url")
             if (rangeStart > 0 && code != HttpURLConnection.HTTP_PARTIAL) {
                 // Server ignored the Range header; restarting from zero would
@@ -49,12 +53,37 @@ class AndroidFetcher : Fetcher {
         }
     }
 
+    /**
+     * Authoritative size of the artifact, or -1 when the server won't say. Tries HEAD
+     * first and falls back to a single-byte ranged GET, because some CDNs answer HEAD
+     * with 405 or omit Content-Length on it.
+     */
     override suspend fun contentLength(url: String): Long = withContext(Dispatchers.IO) {
+        headLength(url).takeIf { it >= 0 } ?: rangeProbeLength(url)
+    }
+
+    private fun headLength(url: String): Long {
         val connection = open(url)
-        try {
+        return try {
             connection.requestMethod = "HEAD"
             connection.connect()
-            connection.contentLengthLong
+            if (connection.responseCode in 200..299) connection.contentLengthLong else -1L
+        } catch (_: IOException) {
+            -1L
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** Reads the total from `Content-Range: bytes 0-0/<total>`. */
+    private fun rangeProbeLength(url: String): Long {
+        val connection = open(url)
+        return try {
+            connection.setRequestProperty("Range", "bytes=0-0")
+            connection.connect()
+            if (connection.responseCode != HttpURLConnection.HTTP_PARTIAL) return -1L
+            val total = connection.getHeaderField("Content-Range")?.substringAfterLast('/')
+            total?.trim()?.toLongOrNull() ?: -1L
         } catch (_: IOException) {
             -1L
         } finally {
@@ -67,6 +96,13 @@ class AndroidFetcher : Fetcher {
         connection.connectTimeout = 15_000
         connection.readTimeout = 30_000
         connection.instanceFollowRedirects = true
+        // Without this the stack may request gzip and silently inflate the body, so the
+        // bytes we write would no longer match the Content-Length the installer verifies.
+        connection.setRequestProperty("Accept-Encoding", "identity")
         return connection
+    }
+
+    private companion object {
+        const val RANGE_NOT_SATISFIABLE = 416
     }
 }

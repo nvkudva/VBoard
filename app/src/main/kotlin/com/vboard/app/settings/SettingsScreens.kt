@@ -521,7 +521,7 @@ private fun ModelPackRow(
                     )
                     PackState.Verifying -> stringResource(R.string.pack_verifying)
                     PackState.Installed -> stringResource(R.string.pack_installed)
-                    is PackState.Failed -> installErrorText(state.error)
+                    is PackState.Failed -> installErrorText(state.error, pack)
                 }
                 Text("${formatBytes(pack.totalBytes)} · $stateText")
             },

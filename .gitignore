@@ -13,3 +13,6 @@ captures/
 
 # OS
 .DS_Store
+
+# Kotlin compiler session scratch files
+.kotlin/

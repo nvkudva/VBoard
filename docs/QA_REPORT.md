@@ -14,8 +14,8 @@ plan for the Android layer. Requirement IDs (VB-###) refer to
 | Commit planning & text diff | `CommitPlannerTest`, `TextDiffTest` | 15 | ✅ pass |
 | Dictation state machine | `DictationStateMachineTest`, `qa/StateMachineFuzzTest` | 20 + fuzz (200 seeded runs × 50 events) | ✅ pass |
 | Suggestions/autocorrect | `SuggestionEngineTest`, `LexiconTest`, `UserHistoryTest`, `qa/SuggestionEngineQaTest` | 90+ | ✅ pass |
-| Model catalog & installer | `ModelCatalogTest`, `PackInstallerTest`, `qa/ModelInstallerQaTest` | 40+ | ✅ pass |
-| **Total** | | **294** | **293 pass / 1 skipped** |
+| Model catalog & installer | `ModelCatalogTest`, `PackInstallerTest`, `qa/ModelInstallerQaTest` | 45+ | ✅ pass |
+| **Total** | | **301** | **300 pass / 1 skipped** |
 
 Run locally with `./gradlew -Pvboard.skipAndroid=true :core:test`; CI runs the
 same suite plus the Android build on every push.
@@ -24,6 +24,8 @@ same suite plus the Android build on every push.
 
 | ID | Severity | Finding | Status |
 |---|---|---|---|
+| VB-QA-10 | **Critical** | Model download failed at ~100% on device and every retry re-failed instantly: the installer treated the catalog's *estimated* `sizeBytes` as a hard minimum (`Files.size(part) < spec.sizeBytes` → `NETWORK`), and every real upstream artifact is smaller than the estimate (Zipformer 127,887,156 vs 130,000,000; Parakeet 482,468,385 vs 700,000,000). The complete `.part` then re-hashed instantly on retry (bar jumps to 100%), and the follow-up `Range:` request past the end of the file drew an HTTP 416, which `AndroidFetcher` reported as a network error — an unbreakable loop. Blocked first-run setup entirely. | **Fixed** — the installer asks the server for each file's authoritative length (`Fetcher.contentLength`, HEAD with a ranged-GET fallback) and gates on that; catalog sizes now only seed progress and the storage pre-check. A `.part` that already holds the whole file skips the request, an over-long remnant is discarded and redownloaded, and 416 is handled as "already complete". Real sizes pinned in the catalog. |
+| VB-QA-11 | Medium | The storage pre-check reserved only the download size, but a `.tar.bz2` is extracted before it is deleted, so the peak footprint is ~2.5x. A device with just enough room passed the check and then failed during extraction. | **Fixed** — `ModelPack.installFootprintBytes` budgets 2.5x for archive files; the onboarding/settings error now names the space actually required. |
 | VB-QA-01 | **High** | Repetition collapse corrupted spoken digit sequences: "five five five one two one two" → "five one two" (phone numbers destroyed; violates VB-203 "when uncertain, keep both"). | **Fixed** — number-like words (digits, number words) are exempt from word- and bigram-level collapse. Covered by re-enabled golden tests. |
 | VB-QA-06 | **High** | Mixed-case tokens near a frequent word were autocorrected: "iPhone"→"phone", "iOS"→"is", "VBoard"→"Board" (risk R5: corrupting deliberate input). | **Fixed** — internal capitals now gate autocorrect exactly like ALL-CAPS. |
 | VB-QA-07 | **High** | Two concurrent `install()` calls for the same pack interleaved writes into one `.part` file and could activate a corrupt model that passed its own running digest (breaks VB-403). | **Fixed** — per-pack `Mutex` serializes installs; second caller short-circuits on the marker. Concurrency test re-enabled. |
@@ -67,5 +69,6 @@ same suite plus the Android build on every push.
 
 - Endpoint tuning (0.8s trailing silence) needs real-device validation across speaking styles.
 - Parakeet int8 cold-load takes seconds on first mic press; mitigated by the engine cache but worth a warm-up on IME bind.
-- Catalog `sizeBytes` are estimates until a release process pins exact sizes + sha256 digests (currently checksum verification is skipped where hashes are empty — pin before shipping).
+- Catalog sha256 digests are still empty, so checksum verification is skipped — pin them before shipping. Sizes are now measured from the upstream assets, and the installer no longer depends on them being exact (VB-QA-10), but an unpinned hash means a corrupted-but-complete download would install.
+- Size and 416 handling is verified against fakes; the live GitHub-release behaviour it models (200/206/416, `Content-Range` totals) was confirmed by hand and should be re-checked if the download host changes.
 - MediaPipe LLM Inference is in maintenance mode upstream; migration to LiteRT-LM is a v2 consideration.

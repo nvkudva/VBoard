@@ -62,9 +62,21 @@ class ModelCatalogTest {
             }
             assertEquals(pack.files.sumOf { it.sizeBytes }, pack.totalBytes)
         }
-        assertEquals(130_000_000L, ModelCatalog.byId("zipformer-en-streaming")!!.totalBytes)
-        assertEquals(700_000_000L, ModelCatalog.byId("parakeet-tdt-0.6b-v2")!!.totalBytes)
+        // Sizes measured from the upstream release assets; the installer re-checks with
+        // the server, so drift here only affects progress and the storage pre-check.
+        assertEquals(127_887_156L, ModelCatalog.byId("zipformer-en-streaming")!!.totalBytes)
+        assertEquals(482_468_385L, ModelCatalog.byId("parakeet-tdt-0.6b-v2")!!.totalBytes)
         assertEquals(547_000_000L, ModelCatalog.byId("qwen25-05b-refiner")!!.totalBytes)
+    }
+
+    @Test
+    fun `archive packs budget extra disk for extraction the plain file pack does not`() {
+        val parakeet = ModelCatalog.byId("parakeet-tdt-0.6b-v2")!!
+        assertEquals(parakeet.totalBytes * 5 / 2, parakeet.installFootprintBytes)
+
+        // The LLM .task is downloaded as-is, so its footprint is just its size.
+        val refiner = ModelCatalog.byId("qwen25-05b-refiner")!!
+        assertEquals(refiner.totalBytes, refiner.installFootprintBytes)
     }
 
     @Test

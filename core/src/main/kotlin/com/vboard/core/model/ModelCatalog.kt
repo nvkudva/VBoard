@@ -33,14 +33,23 @@ data class ModelPack(
     val required: Boolean,
 ) {
     val totalBytes: Long get() = files.sumOf { it.sizeBytes }
+
+    /**
+     * Peak disk the install needs. An archive is extracted before it is deleted, so it
+     * briefly coexists with its contents; 2.5x the compressed size covers a bz2 of
+     * already-quantized ONNX weights (which compress poorly) plus the archive itself.
+     */
+    val installFootprintBytes: Long
+        get() = files.sumOf { if (it.archive) it.sizeBytes * 5 / 2 else it.sizeBytes }
 }
 
 /**
  * Static catalog of the model packs VBoard knows how to download.
  *
  * Empty sha256 means "skip verification"; hashes get pinned once a release
- * process snapshots the upstream artifacts. Sizes are used for progress UI and
- * storage pre-checks; the installer tolerates small drift from upstream.
+ * process snapshots the upstream artifacts. Sizes seed the progress UI and the
+ * storage pre-check only - the installer asks the server for each file's real
+ * length and never treats these numbers as a completion gate.
  */
 object ModelCatalog {
 
@@ -58,7 +67,7 @@ object ModelCatalog {
                     relativePath = "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
                     url = "$SHERPA_RELEASE_BASE/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
                     sha256 = "",
-                    sizeBytes = 130_000_000L,
+                    sizeBytes = 127_887_156L, // measured from the release asset
                     archive = true,
                 ),
             ),
@@ -75,7 +84,7 @@ object ModelCatalog {
                     relativePath = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
                     url = "$SHERPA_RELEASE_BASE/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
                     sha256 = "",
-                    sizeBytes = 700_000_000L,
+                    sizeBytes = 482_468_385L, // measured from the release asset
                     archive = true,
                 ),
             ),
@@ -95,7 +104,7 @@ object ModelCatalog {
                     relativePath = "qwen2.5-0.5b-instruct-q8.task",
                     url = "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
                     sha256 = "",
-                    sizeBytes = 547_000_000L,
+                    sizeBytes = 547_000_000L, // estimate; the installer uses the server's length
                 ),
             ),
             licenseNote = "Qwen2.5, Apache-2.0 (LiteRT community build)",

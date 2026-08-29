@@ -90,10 +90,16 @@ internal fun formatBytes(bytes: Long): String =
         "${bytes / 1_000_000L} MB"
     }
 
-internal fun installErrorText(error: InstallError): String = when (error) {
+internal fun installErrorText(error: InstallError, pack: ModelPack? = null): String = when (error) {
     InstallError.NETWORK -> "Download interrupted. Check your connection and retry."
     InstallError.CHECKSUM_MISMATCH -> "The downloaded file didn't verify. Retry to download it again."
-    InstallError.INSUFFICIENT_STORAGE -> "Not enough free storage. Free up space and retry."
+    InstallError.INSUFFICIENT_STORAGE -> if (pack == null) {
+        "Not enough free storage. Free up space and retry."
+    } else {
+        // The footprint exceeds the download: an archive is unpacked before it is deleted.
+        "Needs about ${formatBytes(pack.installFootprintBytes)} free while installing. " +
+            "Free up space and retry."
+    }
     InstallError.CANCELLED -> "Download cancelled."
     InstallError.IO -> "Couldn't save the model to storage. Retry."
 }
@@ -552,7 +558,7 @@ private fun PackRow(
                 is PackState.Failed -> {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = installErrorText(state.error),
+                        text = installErrorText(state.error, pack),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )

@@ -74,7 +74,8 @@ class PackInstaller(
             return PackState.Installed
         }
 
-        val totalBytes = pack.totalBytes
+        // Starts from catalog estimates and is replaced by the server's real sizes below.
+        var totalBytes = pack.totalBytes
         var lastEmittedBytes = -1L
 
         fun emitProgress(bytesDone: Long) {
@@ -89,7 +90,9 @@ class PackInstaller(
         }
 
         // Storage check: no network calls if the remaining bytes plus headroom won't fit.
-        val remainingBytes = (totalBytes - bytesOnDisk(pack)).coerceAtLeast(0L)
+        // Archives briefly coexist with their extracted contents, so the footprint is
+        // larger than the download itself.
+        val remainingBytes = (pack.installFootprintBytes - bytesOnDisk(pack)).coerceAtLeast(0L)
         if (freeBytes() < remainingBytes + STORAGE_HEADROOM_BYTES) {
             return fail(InstallError.INSUFFICIENT_STORAGE)
         }
@@ -101,18 +104,51 @@ class PackInstaller(
             return fail(InstallError.IO)
         }
 
+        // Pre-flight: ask the server for each file's authoritative size. The catalog's
+        // sizeBytes are only estimates (upstream rebuilds its artifacts), so using them
+        // as a completion gate rejected perfectly good downloads and made every retry
+        // fail identically after instantly "re-completing" the progress bar. A size of
+        // -1 means the server wouldn't say; that file is then accepted on a clean stream.
+        val expected = LongArray(pack.files.size) { -1L }
+        for ((i, spec) in pack.files.withIndex()) {
+            val target = staging.resolve(spec.relativePath)
+            if (Files.isRegularFile(target)) {
+                expected[i] = sizeOrZero(target) // already downloaded and verified
+                continue
+            }
+            val remote = try {
+                fetcher.contentLength(spec.url)
+            } catch (e: CancellationException) {
+                return fail(InstallError.CANCELLED)
+            } catch (e: IOException) {
+                -1L
+            }
+            // Some servers answer HEAD with Content-Length: 0 for a real file. Only believe
+            // a zero when the catalog agrees the file is empty; otherwise treat it as unknown.
+            expected[i] = if (remote == 0L && spec.sizeBytes > 0L) -1L else remote
+        }
+        totalBytes = pack.files.indices.sumOf { i ->
+            if (expected[i] >= 0) expected[i] else pack.files[i].sizeBytes
+        }
+
         var completedBytes = 0L
-        for (spec in pack.files) {
+        for ((index, spec) in pack.files.withIndex()) {
             val target = staging.resolve(spec.relativePath)
             val part = staging.resolve(spec.relativePath + PART_SUFFIX)
+            val expectedBytes = expected[index]
 
             try {
                 target.parent?.let(Files::createDirectories)
                 // Completed earlier (already verified before its rename): skip.
-                if (Files.isRegularFile(target) && Files.size(target) == spec.sizeBytes) {
-                    completedBytes += spec.sizeBytes
+                if (Files.isRegularFile(target)) {
+                    completedBytes += Files.size(target)
                     emitProgress(completedBytes)
                     continue
+                }
+                // A remnant longer than the artifact (interrupted write, or upstream
+                // changed the file) can never be resumed into a match: start it over.
+                if (expectedBytes >= 0 && sizeOrZero(part) > expectedBytes) {
+                    Files.deleteIfExists(part)
                 }
             } catch (e: IOException) {
                 return fail(InstallError.IO)
@@ -141,31 +177,44 @@ class PackInstaller(
             emitProgress(completedBytes + existingBytes)
             val progressBase = completedBytes + existingBytes
 
-            try {
-                DigestOutputStream(
-                    Files.newOutputStream(
-                        part,
-                        StandardOpenOption.CREATE,
-                        StandardOpenOption.WRITE,
-                        StandardOpenOption.APPEND,
-                    ),
-                    digest,
-                ).use { sink ->
-                    fetcher.fetch(spec.url, existingBytes, sink) { newBytes ->
-                        emitProgress(progressBase + newBytes)
+            // A .part that already holds the whole file (the previous attempt died between
+            // the last byte and activation) needs no request: asking for the range past the
+            // end earns an HTTP 416, which used to look like a network failure forever.
+            val alreadyFetched = existingBytes > 0 && expectedBytes >= 0 && existingBytes == expectedBytes
+            if (!alreadyFetched) {
+                try {
+                    DigestOutputStream(
+                        Files.newOutputStream(
+                            part,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.WRITE,
+                            StandardOpenOption.APPEND,
+                        ),
+                        digest,
+                    ).use { sink ->
+                        fetcher.fetch(spec.url, existingBytes, sink) { newBytes ->
+                            emitProgress(progressBase + newBytes)
+                        }
                     }
+                } catch (e: CancellationException) {
+                    // Partial files retained for resume.
+                    return fail(InstallError.CANCELLED)
+                } catch (e: IOException) {
+                    // Network failure; the .part stays on disk for resume.
+                    return fail(InstallError.NETWORK)
                 }
-            } catch (e: CancellationException) {
-                // Partial files retained for resume.
-                return fail(InstallError.CANCELLED)
-            } catch (e: IOException) {
-                // Network failure; the .part stays on disk for resume.
-                return fail(InstallError.NETWORK)
             }
 
+            val actualBytes: Long
             try {
-                if (Files.size(part) < spec.sizeBytes) {
-                    // Server delivered a short body without erroring; keep the .part for resume.
+                actualBytes = sizeOrZero(part)
+                if (expectedBytes >= 0) {
+                    if (actualBytes != expectedBytes) {
+                        // Truncated (or over-long) body without an error; keep the .part for resume.
+                        return fail(InstallError.NETWORK)
+                    }
+                } else if (actualBytes == 0L && spec.sizeBytes > 0L) {
+                    // Server size unknown AND nothing arrived for a file we expect content from.
                     return fail(InstallError.NETWORK)
                 }
                 if (spec.sha256.isNotEmpty()) {
@@ -183,7 +232,7 @@ class PackInstaller(
                 return fail(InstallError.IO)
             }
 
-            completedBytes += spec.sizeBytes
+            completedBytes += actualBytes
             emitProgress(completedBytes)
         }
 
