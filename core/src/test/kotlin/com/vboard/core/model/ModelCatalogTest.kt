@@ -90,6 +90,34 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun `a pack fetched from a mutable ref or without a digest can never be required`() {
+        // The refiner is pulled from a Hugging Face branch ref with no pinned digest, so its
+        // bytes can change under us and nothing verifies them. That is tolerable for an
+        // opt-in extra and not for anything on the setup critical path, so the two
+        // properties are wired together here rather than left to a code review.
+        for (pack in ModelCatalog.packs) {
+            val unverified = pack.files.any { it.sha256.isEmpty() }
+            val mutableRef = pack.files.any { it.url.contains("/resolve/main/") }
+            if (unverified || mutableRef) {
+                assertFalse(
+                    pack.required,
+                    "${pack.id} must be optional until its URL is pinned to an immutable " +
+                        "revision and its sha256 is filled in from the release pipeline",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `every download url is https`() {
+        for (pack in ModelCatalog.packs) {
+            for (file in pack.files) {
+                assertTrue(file.url.startsWith("https://"), "${file.relativePath} must use https")
+            }
+        }
+    }
+
+    @Test
     fun `archive packs budget extra disk for extraction the plain file pack does not`() {
         val parakeet = ModelCatalog.byId("parakeet-tdt-0.6b-v2")!!
         assertEquals(parakeet.totalBytes * 5 / 2, parakeet.installFootprintBytes)

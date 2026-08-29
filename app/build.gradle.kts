@@ -16,6 +16,16 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // sherpa-onnx ships arm64-v8a, armeabi-v7a and x86_64 .so files, and with no
+            // filter all three land in the APK against a < 30 MB budget (PRODUCT_SPEC
+            // VB-621). arm64-v8a is the only ABI the target hardware uses: 32-bit-only
+            // Android phones are gone, and Play has required a 64-bit build since 2019.
+            // x86_64 covers emulators only; add an emulator-friendly variant if that ever
+            // needs to change, rather than shipping it to every user.
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -68,6 +78,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
+    // Model downloads: WorkManager owns the retry/constraint/process-death story that a
+    // START_NOT_STICKY foreground service could not (PRODUCT_SPEC VB-402).
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

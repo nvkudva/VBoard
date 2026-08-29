@@ -107,12 +107,22 @@ class FixResult internal constructor(
     /** Validator verdicts for chunks whose model output was thrown away. */
     val rejections: List<RejectReason>,
     val chunks: Int,
+    /**
+     * What changed, attributed to the tier that changed it, addressed against
+     * [correctedText]. Mechanical edits are meant to land without ceremony;
+     * editorial ones are meant to be shown and individually revertible.
+     */
+    val edits: List<FixEdit> = emptyList(),
 ) {
     fun correctedText(): String = text
 
+    val mechanicalCount: Int get() = edits.count { it.kind == EditKind.MECHANICAL }
+
+    val editorialCount: Int get() = edits.count { it.kind == EditKind.EDITORIAL }
+
     override fun toString(): String =
-        "FixResult(status=$status, refusal=$refusal, smart=$smart, " +
-            "chunks=$chunks, rejections=$rejections)"
+        "FixResult(status=$status, refusal=$refusal, smart=$smart, chunks=$chunks, " +
+            "rejections=$rejections, mechanical=$mechanicalCount, editorial=$editorialCount)"
 }
 
 /**
@@ -166,10 +176,10 @@ class TextFixer(private val cleaner: TranscriptCleaner = TranscriptCleaner()) {
 
         val rules = rulesOnly(text, fieldKind)
         if (refiner == null) {
-            return finish(text, rules, SmartTier.NOT_INSTALLED, emptyList(), 0)
+            return finish(text, rules, rules, SmartTier.NOT_INSTALLED, emptyList(), 0)
         }
         if (rules.length > FixChunker.MAX_SMART_CHARS) {
-            return finish(text, rules, SmartTier.TOO_LONG, emptyList(), 0)
+            return finish(text, rules, rules, SmartTier.TOO_LONG, emptyList(), 0)
         }
 
         val segments = FixChunker.split(rules)
@@ -217,6 +227,7 @@ class TextFixer(private val cleaner: TranscriptCleaner = TranscriptCleaner()) {
         }
         return finish(
             original = text,
+            rules = rules,
             corrected = FixChunker.assemble(segments, bodies),
             tier = tier,
             rejections = rejections,
@@ -226,6 +237,7 @@ class TextFixer(private val cleaner: TranscriptCleaner = TranscriptCleaner()) {
 
     private fun finish(
         original: String,
+        rules: String,
         corrected: String,
         tier: SmartTier,
         rejections: List<RejectReason>,
@@ -237,5 +249,6 @@ class TextFixer(private val cleaner: TranscriptCleaner = TranscriptCleaner()) {
         text = corrected,
         rejections = rejections,
         chunks = chunks,
+        edits = FixAttribution.attribute(original, rules, corrected),
     )
 }
