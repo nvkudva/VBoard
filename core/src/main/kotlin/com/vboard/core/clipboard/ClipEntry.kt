@@ -7,7 +7,7 @@ package com.vboard.core.clipboard
  * derived from it, including its length. Clip content must never reach logcat,
  * a crash report, or any other diagnostic, and a data class's generated
  * `toString` would put it there the first time anybody logged an entry, a list
- * of entries, or an object holding one. ClipEntryTest guards this.
+ * of entries, or an object holding one. ClipRedactionTest guards this.
  */
 data class ClipEntry(
     val text: String,

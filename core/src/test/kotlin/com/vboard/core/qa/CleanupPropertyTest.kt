@@ -123,11 +123,13 @@ class CleanupPropertyTest {
     @Test
     @Disabled("VB-QA-05: idempotency violations (VB-206) - stacked markers, command re-trigger, break collapse")
     fun `clean is idempotent over stacked-marker and break inputs`() {
-        // (a) 5 stacked markers exhaust the 4-iteration guard; the leftover "No wait"
-        //     is removed by a second pass. (b) "scratch that scratch that" cleans to
-        //     the TEXT "Scratch that"; re-cleaning that output yields a SCRATCH_THAT
-        //     command - on the VB-124 double-cleanup fallback path this would delete
-        //     a previously committed utterance. (c) "\n\n\n" re-tokenizes to "\n\n".
+        // (a) and (c) are closed: the "no wait" marker requires i > 0 (VB-QA-20), so
+        //     the stacked form no longer eats its own leftover, and adjacent breaks
+        //     are merged before rendering (VB-QA-30), so "\n\n\n" is never emitted.
+        //     (b) remains: "scratch that scratch that" collapses to the TEXT
+        //     "Scratch that"; re-cleaning that output yields a SCRATCH_THAT command -
+        //     on the VB-124 double-cleanup fallback path this would delete a
+        //     previously committed utterance.
         for (input in listOf(
             "no wait no wait no wait no wait no wait",
             "scratch that scratch that",

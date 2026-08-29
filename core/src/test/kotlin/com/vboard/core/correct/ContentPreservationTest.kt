@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestFactory
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -97,5 +98,45 @@ class ContentPreservationTest {
             Case("version string", "we shipped v2.10.3 last week", "v2.10.3"),
             Case("abbreviation with dots", "bring water e.g. a bottle please", "e.g."),
         )
+    }
+
+    // ------------------------------------------------------- Shield redaction
+
+    /**
+     * [ContentGuard.Shield] holds the un-shielded spans — URLs, addresses, code,
+     * anything the cleaner must not touch — and its protection is a hand-written
+     * count-only `toString` on a plain class. Adding `data` to that declaration
+     * would re-expose `masked`, `spans` and `prefix` in one keystroke, and until
+     * these tests existed nothing would have caught it. The comparable types
+     * (`SmartOutput`, `FixEdit`, `FixSegment`, `FixUndo`) are all pinned this way.
+     */
+    @Test
+    fun `shield toString carries no content and no count of characters`() {
+        val secret = "https://internal.example.com/q?token=hunter2"
+        val shield = ContentGuard.shield("please open $secret before the demo")
+        val rendered = shield.toString()
+        assertFalse(rendered.contains(secret), rendered)
+        assertFalse(rendered.contains("hunter2"), rendered)
+        assertFalse(rendered.contains("internal"), rendered)
+        assertFalse(rendered.contains(secret.length.toString()), rendered)
+    }
+
+    @Test
+    fun `shield toString is identical for two shields differing only in content`() {
+        val a = ContentGuard.shield("open https://a.example.com now")
+        val b = ContentGuard.shield("open https://a-completely-different.example.org now")
+        assertEquals(a.toString(), b.toString())
+    }
+
+    @Test
+    fun `a list of shields renders without content`() {
+        // The realistic leak: Log.d(TAG, "shields=$list").
+        val list = listOf(
+            ContentGuard.shield("mail alice@example.com today"),
+            ContentGuard.shield("the key is AKIAIOSFODNN7EXAMPLE"),
+        )
+        val rendered = list.toString()
+        assertFalse(rendered.contains("alice@example.com"), rendered)
+        assertFalse(rendered.contains("AKIAIOSFODNN7EXAMPLE"), rendered)
     }
 }

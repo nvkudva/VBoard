@@ -7,7 +7,6 @@ import com.vboard.core.suggest.SuggestionEngine
 import com.vboard.core.suggest.SuggestionRequest
 import com.vboard.core.suggest.UserHistory
 import com.vboard.core.text.FieldKind
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import kotlin.random.Random
@@ -233,7 +232,7 @@ class SuggestionFieldMatrixQaTest {
 
     // ----------------------------------------------------- Unicode composing text
 
-    // ------------- VB-QA-32: accented words are autocorrected into unrelated words
+    // ------------- VB-QA-32: accented words are not autocorrected into unrelated words
 
     @Test
     fun `text in a non-Latin script is never rewritten`() {
@@ -252,33 +251,29 @@ class SuggestionFieldMatrixQaTest {
     }
 
     @Test
-    fun `an accented Latin word is autocorrected into an unrelated word (pinned)`() {
-        // isCorrectableToken accepts any Char.isLetter(), and the weighted edit
-        // distance treats "è" as an ordinary character one substitution away from
-        // "i". The literal only scores LITERAL_PRIOR (2.0) because it is not in the
-        // lexicon, while "crime" scores its full log-frequency — so the margin is
-        // cleared and the replacement is committed on the next space.
-        //
-        // This is the same class as VB-QA-06 (deliberate input rewritten), except
-        // that here it fires in CONSERVATIVE mode, which is the default.
+    fun `an accented Latin word is never autocorrected into an unrelated word (pinned)`() {
+        // The lexicon trie is a-z only, and the weighted edit distance used to
+        // treat "è" as an ordinary character one substitution away from "i" — so
+        // "crime" scored its full log-frequency against a literal worth only
+        // LITERAL_PRIOR (2.0), cleared the margin, and was committed on the next
+        // space. A letter the lexicon cannot spell now takes the token out of the
+        // fuzzy matcher entirely, in every mode.
         val creme = suggest("crème", null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE)
-        assertEquals("crime", creme.autocorrect?.text)
+        assertEquals(null, creme.autocorrect)
         val elan = suggest("élan", null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE)
-        assertEquals("plan", elan.autocorrect?.text)
-        // Two edits away, so AGGRESSIVE is needed for this one.
+        assertEquals(null, elan.autocorrect)
+        // Two edits away, so this one used to need AGGRESSIVE; now neither fires.
         assertEquals(null, suggest("naïve", null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE).autocorrect)
-        assertEquals("have", suggest("naïve", null, FieldKind.TEXT, AutocorrectMode.AGGRESSIVE).autocorrect?.text)
+        assertEquals(null, suggest("naïve", null, FieldKind.TEXT, AutocorrectMode.AGGRESSIVE).autocorrect)
 
-        // Words where the accented form is close to nothing frequent survive — so
-        // the behaviour is not "all accented words are broken", it is "whichever
-        // accented words happen to be one edit from a common one".
+        // Words that were never one edit from anything frequent are unaffected,
+        // which is how this stays a pin on the rule rather than on the outcome.
         for (safe in listOf("café", "résumé", "Straße", "über", "señor", "façade", "jalapeño")) {
             assertEquals(null, suggest(safe, null, FieldKind.TEXT, AutocorrectMode.AGGRESSIVE).autocorrect, "for <$safe>")
         }
     }
 
     @Test
-    @Disabled("VB-QA-32: an accented Latin word is one weighted edit from a frequent ASCII word and scores only LITERAL_PRIOR, so CONSERVATIVE autocorrect rewrites 'crème' to 'crime' and 'élan' to 'plan'")
     fun `an accented Latin word should never be autocorrected into an unrelated word`() {
         for (word in listOf("crème", "élan", "naïve", "café", "résumé", "Müller")) {
             for (mode in listOf(AutocorrectMode.CONSERVATIVE, AutocorrectMode.AGGRESSIVE)) {
@@ -288,16 +283,35 @@ class SuggestionFieldMatrixQaTest {
     }
 
     @Test
-    fun `a correctly spelled accented word is out-ranked in its own strip (pinned)`() {
-        // The milder half of the same defect: even where autocorrect declines, the
-        // strip leads with an unrelated ASCII word, so a one-tap mistake commits it.
-        assertEquals("have", suggest("naïve", null, FieldKind.TEXT).suggestions.first().text)
-        assertEquals("Miller", suggest("Müller", null, FieldKind.TEXT).suggestions.first().text)
-        assertEquals("I", suggest("à", null, FieldKind.TEXT).suggestions.first().text)
+    fun `a correctly spelled accented word leads its own strip (pinned)`() {
+        // The milder half of the same defect: even where autocorrect declined, the
+        // strip led with an unrelated ASCII word, so a one-tap mistake committed it.
+        // With no fuzzy candidates the literal is the only thing to rank.
+        assertEquals("naïve", suggest("naïve", null, FieldKind.TEXT).suggestions.first().text)
+        assertEquals("Müller", suggest("Müller", null, FieldKind.TEXT).suggestions.first().text)
+        // A single accented character too, which the enabled test's list does not
+        // reach: "à" used to lose its own strip to the pronoun rule's "I".
+        assertEquals("à", suggest("à", null, FieldKind.TEXT).suggestions.first().text)
     }
 
     @Test
-    @Disabled("VB-QA-32: a correctly spelled out-of-lexicon word with a non-ASCII letter is ranked below an unrelated lexicon word, so the strip leads with 'have' for 'naïve' and 'Miller' for 'Müller'")
+    fun `the accented-word rule silences the trie, not the words the user taught`() {
+        // VB-QA-32's suppression belongs to the a-z trie, whose edit distance
+        // cannot measure "è". The user's own history has no such limit — it learns
+        // accented words and predicts them — so a rule scoped to the whole engine
+        // would cost a French or Turkish user their own vocabulary.
+        val history = UserHistory()
+        val engine = engine(history)
+        engine.recordCommittedWord("crème", "brûlée")
+        assertTrue(history.unigramCount("brûlée") > 0, "an accented word was not learned")
+        assertEquals(
+            "brûlée",
+            suggest("", "crème", FieldKind.TEXT, engine = engine).suggestions.first().text,
+            "a learned accented word was not predicted",
+        )
+    }
+
+    @Test
     fun `a correctly spelled word should lead its own suggestion strip`() {
         for (word in listOf("naïve", "Müller", "café", "résumé")) {
             val result = suggest(word, null, FieldKind.TEXT, AutocorrectMode.CONSERVATIVE)

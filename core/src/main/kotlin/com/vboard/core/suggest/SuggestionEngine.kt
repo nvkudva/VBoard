@@ -137,17 +137,21 @@ class SuggestionEngine(
             candidates[word] = Candidate(word, score, Suggestion.Source.COMPLETION, extra)
         }
 
-        // Fuzzy corrections.
-        val maxCost = if (lower.length <= SHORT_WORD_LENGTH) 1.0 else 2.0
-        lexicon.fuzzyMatch(lower, maxCost) { word, frequency, cost, ops ->
-            val score = ln(1.0 + frequency) - EDIT_PENALTY * cost + historyBoost(word, prev)
-            val existing = candidates[word]
-            if (existing == null) {
-                candidates[word] = Candidate(word, score, Suggestion.Source.CORRECTION, ops)
-            } else if (score > existing.score) {
-                existing.score = score
-                existing.source = Suggestion.Source.CORRECTION
-                existing.ops = ops
+        // Fuzzy corrections. Skipped for text the trie cannot spell: every match
+        // it could return is a mis-measurement (VB-QA-32). This is a fact about
+        // this one candidate source, so the skip lives at its call site.
+        if (!isOutsideTrieAlphabet(composing)) {
+            val maxCost = if (lower.length <= SHORT_WORD_LENGTH) 1.0 else 2.0
+            lexicon.fuzzyMatch(lower, maxCost) { word, frequency, cost, ops ->
+                val score = ln(1.0 + frequency) - EDIT_PENALTY * cost + historyBoost(word, prev)
+                val existing = candidates[word]
+                if (existing == null) {
+                    candidates[word] = Candidate(word, score, Suggestion.Source.CORRECTION, ops)
+                } else if (score > existing.score) {
+                    existing.score = score
+                    existing.source = Suggestion.Source.CORRECTION
+                    existing.ops = ops
+                }
             }
         }
 
@@ -255,6 +259,32 @@ class SuggestionEngine(
         return Suggestion(presentPronouns(matchCase(composing, best.word)), best.score, best.source)
     }
 
+    /**
+     * True when [composing] contains a letter the bundled trie cannot spell.
+     *
+     * The trie holds a-z only, and the weighted edit distance charges "è" -> "i"
+     * as one ordinary substitution — so an out-of-lexicon accented word lands one
+     * edit from a frequent ASCII one and the margin falls over ("crème" -> "crime",
+     * "élan" -> "plan"). No word the *fuzzy walk* can return for such a token is a
+     * real spelling of it (VB-QA-32).
+     *
+     * That is a limit of the trie, not of the engine, so nothing else consults
+     * this: autocorrect declines an accented token because the trie handed it no
+     * candidate, not because a blanket rule silenced every source. User history —
+     * which does learn accented words and does surface them as predictions — must
+     * stay reachable. Deliberate ASCII casing ("iPhone", "ASAP") is untouched by
+     * this test either way.
+     */
+    private fun isOutsideTrieAlphabet(composing: String): Boolean {
+        var i = 0
+        while (i < composing.length) {
+            val cp = composing.codePointAt(i)
+            if (Character.isLetter(cp) && Character.toLowerCase(cp) !in ASCII_LOWER) return true
+            i += Character.charCount(cp)
+        }
+        return false
+    }
+
     /** Letters with optional internal apostrophes; digits/symbols make a token untouchable. */
     private fun isCorrectableToken(composing: String): Boolean {
         if (composing.isEmpty()) return false
@@ -300,6 +330,9 @@ class SuggestionEngine(
 
         /** Base score of out-of-lexicon literal text (the benefit of the doubt). */
         private const val LITERAL_PRIOR = 2.0
+
+        /** The lexicon trie's whole alphabet, in code points. */
+        private val ASCII_LOWER = 'a'.code..'z'.code
 
         private const val CONSERVATIVE_MARGIN = 1.0
         private const val AGGRESSIVE_MARGIN = 0.25

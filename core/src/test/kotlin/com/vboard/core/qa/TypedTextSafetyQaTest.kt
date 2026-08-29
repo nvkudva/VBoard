@@ -7,7 +7,6 @@ import com.vboard.core.text.CleanupRequest
 import com.vboard.core.text.FieldKind
 import com.vboard.core.text.TranscriptCleaner
 import java.text.Normalizer
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import kotlin.random.Random
@@ -141,29 +140,29 @@ class TypedTextSafetyQaTest {
         )
     }
 
-    // ------------------------------- VB-QA-34: hyphen-led tokens escape the shield
+    // ------------------------------- VB-QA-34: hyphen-led tokens reach the shield
 
     @Test
-    fun `a token starting with a hyphen is not shielded and is split (pinned)`() {
-        // needsShield treats "-" as safe (it is a legal word-internal character),
-        // so a chunk whose only unusual feature is a LEADING hyphen passes
-        // through unshielded. The tokenizer then sees a hyphen with no word
-        // before it, emits it as punctuation, and the renderer spaces it.
+    fun `a token starting with a hyphen is shielded, but a bare bullet is not (pinned)`() {
+        // An edge hyphen is not word-internal, so "-m" and "--verbose" are shielded
+        // and survive the tokenizer, which would otherwise emit the hyphen as bare
+        // punctuation and let the renderer space it out.
         //
-        // Command-line flags, markdown bullets and dashed asides all take this
-        // shape, and all of them are typed text somebody would run "AI fix" over.
-        assertEquals("Run git commit - m \"fix\" first.", TypedTextCleanup.clean("run git commit -m \"fix\" first"))
-        assertEquals("Use - verbose here.", TypedTextCleanup.clean("use --verbose here"))
+        // The bullet is the boundary of the rule and the reason it carries a
+        // letter-or-digit clause: "-" on its own has to stay in the prose stream,
+        // because shielding it would hide the sentence start from the caser and
+        // "first" would never become "First".
+        assertEquals("Run git commit -m \"fix\" first.", TypedTextCleanup.clean("run git commit -m \"fix\" first"))
+        assertEquals("Use --verbose here.", TypedTextCleanup.clean("use --verbose here"))
         assertEquals("- First item", TypedTextCleanup.clean("- first item"))
-        // A leading hyphen followed by a digit IS shielded, because the digit
-        // trips needsShield. So the hole is specific to hyphen-then-letters.
+        // A leading hyphen followed by a digit was already shielded by the digit
+        // rule, and must stay that way.
         assertEquals("The value is -5 today.", TypedTextCleanup.clean("the value is -5 today"))
-        assertTrue(!ContentGuard.needsShield("-m"))
+        assertTrue(ContentGuard.needsShield("-m"))
         assertTrue(ContentGuard.needsShield("-5"))
     }
 
     @Test
-    @Disabled("VB-QA-34: ContentGuard.needsShield accepts a leading hyphen as an ordinary word character, so '-m', '--verbose' and markdown bullets reach the tokenizer and are split into ' - m'")
     fun `a hyphen-led token should be shielded like any other non-prose chunk`() {
         assertEquals("Run git commit -m \"fix\" first.", TypedTextCleanup.clean("run git commit -m \"fix\" first"))
         assertEquals("Use --verbose here.", TypedTextCleanup.clean("use --verbose here"))
@@ -173,22 +172,20 @@ class TypedTextSafetyQaTest {
     // --------------------------------------------------- VB-QA-33: guard holes
 
     @Test
-    fun `an NFD-accented word is shielded, so it is not capitalized (pinned)`() {
-        // needsShield returns true for a combining mark (it is neither a letter,
-        // a digit, an apostrophe nor a hyphen), so the whole word is swapped out
-        // and the sentence-casing rule never sees it. The NFC form of the same
-        // word is not shielded and is capitalized. Identical text on screen, two
-        // different results.
+    fun `an NFD-accented word is not shielded, so it is capitalized (pinned)`() {
+        // A combining mark sitting on a letter is just the decomposed spelling of
+        // an accented word, so needsShield lets it through and the sentence-casing
+        // rule sees it — same answer as its NFC twin. Identical text on screen,
+        // one result.
         val nfc = Normalizer.normalize("café is open", Normalizer.Form.NFC)
         val nfd = Normalizer.normalize("café is open", Normalizer.Form.NFD)
         assertEquals(Normalizer.normalize("Café is open.", Normalizer.Form.NFC), TypedTextCleanup.clean(nfc))
-        assertEquals(Normalizer.normalize("café is open.", Normalizer.Form.NFD), TypedTextCleanup.clean(nfd))
+        assertEquals(Normalizer.normalize("Café is open.", Normalizer.Form.NFC), TypedTextCleanup.clean(nfd))
         assertTrue(!ContentGuard.needsShield(Normalizer.normalize("café", Normalizer.Form.NFC)))
-        assertTrue(ContentGuard.needsShield(Normalizer.normalize("café", Normalizer.Form.NFD)))
+        assertTrue(!ContentGuard.needsShield(Normalizer.normalize("café", Normalizer.Form.NFD)))
     }
 
     @Test
-    @Disabled("VB-QA-33: ContentGuard.needsShield treats a combining mark as unsafe content, so an NFD-accented word is shielded and escapes sentence casing while its NFC twin is capitalized")
     fun `typed cleanup should not depend on the normalization form`() {
         for (text in listOf("café is open", "naïve idea here", "résumé attached now")) {
             assertEquals(

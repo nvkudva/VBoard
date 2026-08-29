@@ -74,18 +74,19 @@ so it can't be a default download — swap the URL in
 
 ### Known limitations in the above
 
-Two of those guarantees have measured holes. Both are pinned by tests and
-scheduled as Wave 1.5; stating them here rather than only in the audit, because
-a privacy claim with a known exception is worse than no claim.
+Two of these guarantees previously had measured holes, disclosed here rather
+than only in the audit. **Both are now closed** (Wave 1.5):
 
-- **The clipboard classifier is ASCII-only** (`VB-QA-24`). It detects digit runs
-  with a regex that does not match Arabic-Indic, Devanagari, Persian or
-  full-width digits, so a one-time code or card number copied in those digits is
-  classified as ordinary text and **is written to the clipboard history file**.
-- **Cleanup still capitalizes inside password fields** (`VB-QA-29`). Voice,
-  suggestions and learning are disabled there as stated, but the field-kind flag
-  gates only the first word, so text after a `.`, `!`, `?` or line break is still
-  auto-capitalized in a field the spec says to leave untouched.
+- `VB-QA-24` — the clipboard classifier detected digit runs with an ASCII-only
+  regex, so a one-time code or card number copied in Arabic-Indic, Devanagari,
+  Persian or full-width digits was written to the history file. Every digit test
+  now means Unicode general category `Nd`, and the same rule admits a digit and
+  evaluates it, so the pattern and the Luhn arithmetic cannot drift apart.
+  Invisible characters are stripped before all three sensitive rules, and group
+  separators may be any Unicode space or dash.
+- `VB-QA-29` — cleanup capitalized inside password fields, because the
+  field-kind flag gated only the first word. The whole capitalization pass is
+  now behind that flag, so cleanup does not transform password content at all.
 
 See [`docs/QA_REPORT.md`](docs/QA_REPORT.md) for the full defect list.
 
