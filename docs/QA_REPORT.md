@@ -237,14 +237,15 @@ looked healthy.
 ## 9. Work packages
 
 Scheduled as **Wave 1.5** in [V2_PLAN.md §3](V2_PLAN.md) — A as W1.5.1, B as
-W1.5.2, C as W1.5.3. *Nothing is dispatched yet.* This section is written to be
+W1.5.2, C as W1.5.3. The wave runs **before** Wave 1's feature work: bugs first,
+features later. *Nothing is dispatched yet.* This section is written to be
 read cold, weeks from now, by someone who was not present: it carries the file
 ownership, constraints and definitions of done that the plan's table does not.
 
 The three packages have no file overlap, so B and C are safe to run
-concurrently. **A lands first** — it shrinks both of the others. The plan also
-records an open ordering question between A and V2's W1.2, which owns the same
-`Tokens.kt`; see Wave 1.5 there.
+concurrently. **A lands first** — it shrinks both of the others. W1.2 (spoken-format) also
+touches `Tokens.kt` and must not start until A has landed — the wave ordering
+already guarantees that.
 
 ### Package A — Unicode-safe text core
 

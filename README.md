@@ -55,8 +55,8 @@ them over Wi-Fi with resume support and SHA-256 verification hooks:
 
 | Pack | Size | Source |
 |---|---|---|
-| Live transcription — streaming Zipformer 20M int8 | ~130 MB | sherpa-onnx `asr-models` release |
-| High accuracy — NVIDIA Parakeet TDT 0.6B v2 int8 | ~700 MB | sherpa-onnx `asr-models` release |
+| Live transcription — streaming Zipformer 20M int8 | ~122 MB | sherpa-onnx `asr-models` release |
+| High accuracy — NVIDIA Parakeet TDT 0.6B v2 int8 | ~460 MB | sherpa-onnx `asr-models` release |
 | Smart cleanup (optional) — Qwen2.5-0.5B-Instruct q8 `.task` | ~550 MB | LiteRT community (ungated, Apache-2.0) |
 
 Prefer Gemma 3 1B for refinement? It needs a Hugging Face license acceptance,
@@ -69,6 +69,25 @@ so it can't be a default download — swap the URL in
 - The `INTERNET` permission is used **only** by the model downloader.
 - Password fields hard-disable voice input, suggestions, and learning.
 - Learned words stay in app-private storage and can be cleared in Settings.
+- The clipboard classifier holds one-time codes, card numbers and passwords in
+  memory for 60 seconds instead of writing them to the history file.
+
+### Known limitations in the above
+
+Two of those guarantees have measured holes. Both are pinned by tests and
+scheduled as Wave 1.5; stating them here rather than only in the audit, because
+a privacy claim with a known exception is worse than no claim.
+
+- **The clipboard classifier is ASCII-only** (`VB-QA-24`). It detects digit runs
+  with a regex that does not match Arabic-Indic, Devanagari, Persian or
+  full-width digits, so a one-time code or card number copied in those digits is
+  classified as ordinary text and **is written to the clipboard history file**.
+- **Cleanup still capitalizes inside password fields** (`VB-QA-29`). Voice,
+  suggestions and learning are disabled there as stated, but the field-kind flag
+  gates only the first word, so text after a `.`, `!`, `?` or line break is still
+  auto-capitalized in a field the spec says to leave untouched.
+
+See [`docs/QA_REPORT.md`](docs/QA_REPORT.md) for the full defect list.
 
 ## Docs
 

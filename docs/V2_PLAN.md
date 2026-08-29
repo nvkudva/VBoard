@@ -78,30 +78,32 @@ Concurrency: W0.3 ∥ W0.4 can run together, and both are disjoint from Wave 1.5
 work. W0.1 and W0.2 both want `VBoardImeService.kt` and are strictly sequential —
 **W0.2 first**, because it is the bug.
 
-### Wave 1 — Confidence foundation
+### Wave 0.5 — Process split (decided)
 
-| # | Item | Owns | Size |
-|---|---|---|---|
-| W1.1 | Transcript normalization + two-model alignment + per-word confidence | `core/confidence/**` (new), `core/session/FinalTranscriptPolicy.kt` | L |
-| W1.2 | Spoken-format intelligence (times, money, dates, spoken email addresses) | `core/format/**` (new), `core/text/Tokens.kt` | M |
+**The LLM refiner moves out of the keyboard process.** Decided; not yet scheduled
+against a wave slot, but it belongs before beta because it is the one change that
+alters the crash surface rather than the feature set.
 
-One owner, sequential — W1.2 consumes W1.1's normalizer. Pure `core`, no Android, no file
-contention with Wave 0. W1.2 *does* contend with Wave 1.5 over `core/text/Tokens.kt` —
-that is decision 2 in §6.
+Why it matters, from [PERFORMANCE_REVIEW.md §7](PERFORMANCE_REVIEW.md): the IME
+process today also hosts Compose, settings, onboarding and the downloader. A
+0.5B model loaded into that process means the keyboard's memory ceiling is set by
+the refiner, and a native OOM or a MediaPipe crash inside it takes the keyboard
+down mid-sentence — in every app on the device, not just ours. An IME is not an
+app the user can decide to reopen; when it dies they lose the ability to type.
 
-**Gate on W1.1: measured disagreement precision against a hand-labeled corpus of ≥200
-utterances, published as a number either way.** Below roughly 70%, W1.2 proceeds and
-everything in Wave 3 that consumes confidence is **cancelled, not deferred** — if the
-signal is mostly normalization artifacts, every downstream consumer is poisoned at the
-source.
+The split also makes the ≤60MB typing-only budget meaningful for the first time,
+since it stops being a number that a background feature can blow through.
 
-**Ordering hazard for W1.2:** format conversion must run *before* `ContentGuard`, and its
-output must then be shielded. `ContentGuard.needsShield` returns true on any digit, so
-getting the order wrong means the tokenizer tears `4:30pm` into `4. 30pm` — the feature
-would fight the safety mechanism that exists to protect it. Every conversion must also
-emit a `MECHANICAL` edit so it is attributable and revertible; spoken numbers have already
-destroyed user text once in this codebase (VB-QA-01, phone numbers collapsed by repetition
-handling).
+**Scope:** `android:process=":llm"` for the refiner plus a binder interface, and
+`android:process=":ui"` for the activities and downloader (the second half of the
+same change, and it is the cheaper half). WorkManager's auto-init ContentProvider
+comes out of the keyboard process with them.
+
+**Hazard to respect:** the refiner is currently called in-process and synchronously
+from the cleanup path. Crossing a process boundary makes it genuinely asynchronous
+and genuinely failable, so the "replacement only when the user hasn't edited" rule
+and the watchdog fallback both need re-checking against a refiner that can now
+die independently — that is the actual work, not the manifest entries.
 
 ### Wave 1.5 — Text-core correctness (the QA findings)
 
@@ -128,21 +130,17 @@ not merely largest, it *shrinks the other two* — VB-QA-33 and VB-QA-34 exist o
 tokenizer stops destroying content. Full file ownership, the constraints each fixer must
 not violate, and per-package definitions of done are in [QA_REPORT.md §9](QA_REPORT.md).
 
-**One hazard created by placing this after Wave 1, and it needs a decision.** W1.2
-(spoken-format intelligence) lists `core/text/Tokens.kt` among the files it owns — the same
-file Package A rewrites. Building `4:30pm` and `$25` handling on top of a tokenizer that
-deletes `:` and `$` means writing the feature against behaviour that is about to change
-underneath it, then reworking it. Two ways out, and the choice is yours:
+**The ordering question that was open here is now closed: bugs first, features
+later.** Wave 1.5 runs *before* Wave 1. That resolves the file collision it would
+otherwise have had — W1.2 (spoken-format intelligence) lists `core/text/Tokens.kt`
+among the files it owns, which is the file Package A rewrites. Building `4:30pm`
+and `$25` handling on a tokenizer that still deletes `:` and `$` would have meant
+writing the feature against behaviour about to change underneath it. Going in this
+order, W1.2 inherits a tokenizer that already preserves the characters it needs,
+and the feature gets smaller rather than reworked.
 
-- **Pull W1.5.1 forward to sit beside W1.1** (they are disjoint — W1.1 owns
-  `core/confidence/**` and `FinalTranscriptPolicy.kt`, A owns `Tokens.kt`), leaving W1.2
-  and the rest of Wave 1.5 where they are. This is the cheaper order and the one this plan
-  recommends.
-- **Keep the wave whole and move W1.2 after it**, accepting that spoken-format slips by
-  roughly one package.
-
-What does *not* work is running W1.2 and W1.5.1 concurrently: one file, two owners, and
-this project has already lost an agent's work to exactly that collision.
+Running the two concurrently remains the one option that does not work: one file,
+two owners, and this project has already lost an agent's work to exactly that.
 
 **Two of these are not schedulable as ordinary polish.** VB-QA-24 writes a one-time code
 or card number to disk when it arrives in non-ASCII digits — `SESSION_ONLY` is the privacy
@@ -150,6 +148,31 @@ boundary and this crosses it. VB-QA-29 capitalizes inside `PASSWORD` fields, whi
 spec says must be left untouched entirely. Both are in Wave 1.5 because that is where
 their packages live, but if beta ships before this wave lands, they are the two that
 should be lifted out and fixed first.
+
+### Wave 1 — Confidence foundation
+
+| # | Item | Owns | Size |
+|---|---|---|---|
+| W1.1 | Transcript normalization + two-model alignment + per-word confidence | `core/confidence/**` (new), `core/session/FinalTranscriptPolicy.kt` | L |
+| W1.2 | Spoken-format intelligence (times, money, dates, spoken email addresses) | `core/format/**` (new), `core/text/Tokens.kt` | M |
+
+One owner, sequential — W1.2 consumes W1.1's normalizer. Pure `core`, no Android, no file
+contention with Wave 0. W1.2 touches `core/text/Tokens.kt`, which Wave 1.5 rewrites first —
+so W1.2 must not start until W1.5.1 has landed.
+
+**Gate on W1.1: measured disagreement precision against a hand-labeled corpus of ≥200
+utterances, published as a number either way.** Below roughly 70%, W1.2 proceeds and
+everything in Wave 3 that consumes confidence is **cancelled, not deferred** — if the
+signal is mostly normalization artifacts, every downstream consumer is poisoned at the
+source.
+
+**Ordering hazard for W1.2:** format conversion must run *before* `ContentGuard`, and its
+output must then be shielded. `ContentGuard.needsShield` returns true on any digit, so
+getting the order wrong means the tokenizer tears `4:30pm` into `4. 30pm` — the feature
+would fight the safety mechanism that exists to protect it. Every conversion must also
+emit a `MECHANICAL` edit so it is attributable and revertible; spoken numbers have already
+destroyed user text once in this codebase (VB-QA-01, phone numbers collapsed by repetition
+handling).
 
 ### Wave 2 — Interaction
 
@@ -245,17 +268,13 @@ Four of thirteen cut. Two-thirds of the remainder sits behind a gate rather than
 
 ## 6. Two decisions needed
 
-**1. Does V2 start before or after beta?**
-Recommendation: Wave 0 now, Waves 1 and 1.5 concurrent with beta, Waves 2–3 after first
-user data. Both are pure `core` with no user-facing surface, so they are the one thing safe
-to build without evidence — and Wave 1.5 is not really a V2 question at all, since it is
-fixing V1. Everything past them is a guess until someone outside the team has used the
-keyboard.
+**1. Does V2 start before or after beta? — DECIDED: bugs first, features later.**
+Wave 0 and Wave 1.5 now, Wave 1 concurrent with beta, Waves 2–3 after first user data.
+Wave 1.5 was never really a V2 question — it is fixing V1. Everything past Wave 1 is a
+guess until someone outside the team has used the keyboard.
 
-**2. Does Package A (W1.5.1) move up beside W1.1, or does W1.2 move down behind Wave 1.5?**
-Recommendation: pull Package A forward. Both orders are defensible; what is not defensible
-is leaving `core/text/Tokens.kt` owned by two waves at once. See Wave 1.5 for the full
-argument.
+**2. Ordering between Package A and W1.2 — DECIDED**, by the same ruling: Wave 1.5 runs
+in full before Wave 1, so `core/text/Tokens.kt` has one owner at a time.
 
 **3. Do we accept that the confidence idea's value is unproven until measured?**
 Two independent reviewers converging is evidence about an idea's *appeal*, not its
