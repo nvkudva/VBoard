@@ -57,6 +57,15 @@ data class CleanupRequest(
     val ensureTerminalPunctuation: Boolean = false,
 )
 
+/**
+ * The outcome of one cleanup pass.
+ *
+ * [toString] is hand-written to exclude [text] and everything derived from it,
+ * including its length. This is a data class for its `copy`/destructuring, and a
+ * generated `toString` would print the whole cleaned transcript the first time
+ * anybody logged a result — so the override is the guard, not a nicety.
+ * `CleanupRedactionTest` guards this.
+ */
 data class CleanupResult(
     val text: String,
     val command: UtteranceCommand = UtteranceCommand.NONE,
@@ -69,4 +78,9 @@ data class CleanupResult(
      * it counts substitutions only and never records which ones.
      */
     val spokenSubstitutions: Int = 0,
-)
+) {
+    override fun toString(): String =
+        "CleanupResult(text=<redacted>, command=$command, fillersRemoved=$fillersRemoved, " +
+            "correctionsResolved=$correctionsResolved, repetitionsCollapsed=$repetitionsCollapsed, " +
+            "spokenSubstitutions=$spokenSubstitutions)"
+}

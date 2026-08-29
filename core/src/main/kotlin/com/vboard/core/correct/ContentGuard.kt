@@ -44,7 +44,10 @@ object ContentGuard {
      * The masked form of one piece of text plus the spans needed to put it back.
      *
      * Deliberately not a data class: the shielded spans are user content and
-     * must never reach a log through a generated `toString()`.
+     * must never reach a log through a generated `toString()`. Making this a data
+     * class would re-expose [masked], `spans` and `prefix` in one keystroke, so
+     * the shape is pinned by ContentPreservationTest rather than left to
+     * convention.
      */
     class Shield internal constructor(
         val masked: String,
