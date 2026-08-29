@@ -30,6 +30,9 @@ import java.util.Locale
  */
 internal object KeyboardA11y {
 
+    fun manager(context: Context): AccessibilityManager? =
+        context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+
     /**
      * True when a touch-exploration service (TalkBack) is driving the screen.
      *
@@ -37,11 +40,11 @@ internal object KeyboardA11y {
      * finger's own exploration), and touch is delivered as hover, so the views
      * switch to lift-to-type.
      */
-    fun touchExplorationEnabled(context: Context): Boolean {
-        val manager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
-            ?: return false
-        return manager.isEnabled && manager.isTouchExplorationEnabled
-    }
+    fun touchExplorationEnabled(context: Context): Boolean =
+        touchExploring(manager(context))
+
+    fun touchExploring(manager: AccessibilityManager?): Boolean =
+        manager != null && manager.isEnabled && manager.isTouchExplorationEnabled
 
     private const val ZERO_WIDTH_JOINER = 0x200D
     private const val VARIATION_SELECTOR_16 = 0xFE0F
@@ -102,6 +105,8 @@ internal const val NO_CELL = -1
  */
 internal abstract class VirtualCells(private val host: View) {
 
+    private val manager = KeyboardA11y.manager(host.context)
+
     /** How many cells the surface currently draws. */
     protected abstract fun count(): Int
 
@@ -147,7 +152,7 @@ internal abstract class VirtualCells(private val host: View) {
     var accessibilityFocusedId: Int = NO_CELL
         private set
 
-    fun touchExplorationEnabled(): Boolean = KeyboardA11y.touchExplorationEnabled(host.context)
+    fun touchExplorationEnabled(): Boolean = KeyboardA11y.touchExploring(manager)
 
     val provider: AccessibilityNodeProvider = object : AccessibilityNodeProvider() {
 
