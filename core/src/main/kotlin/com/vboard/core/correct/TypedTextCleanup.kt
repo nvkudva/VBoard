@@ -4,6 +4,7 @@ import com.vboard.core.text.CleanupOptions
 import com.vboard.core.text.CleanupRequest
 import com.vboard.core.text.FieldKind
 import com.vboard.core.text.TranscriptCleaner
+import com.vboard.core.text.UtteranceCommand
 
 /**
  * The deterministic half of "AI fix": the Tier-1 rules engine, retuned for text
@@ -76,6 +77,14 @@ object TypedTextCleanup {
                         !shield.endsWithShieldedSpan,
                 ),
             )
+            // Stage 2 of the cleaner is not gated by CleanupOptions: a line that
+            // reads exactly "scratch that" comes back as a command with empty
+            // text. Typed, that is a sentence somebody wrote, so the line is
+            // kept as it is rather than deleted.
+            if (result.command != UtteranceCommand.NONE) {
+                out.add(line)
+                continue
+            }
             out.add(lead + shield.restore(result.text) + trail)
         }
         return out.joinToString("\n")

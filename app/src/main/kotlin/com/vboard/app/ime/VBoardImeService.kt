@@ -67,8 +67,7 @@ class VBoardImeService : InputMethodService() {
     /** Closes the strip chip when its 60-second window runs out on its own. */
     private var chipExpiryJob: Job? = null
 
-    /** Highest "delete all clipboard history" timestamp already acted on. */
-    private var lastClipboardClearedAt = 0L
+
 
     private var theme: KeyboardTheme = KeyboardTheme.LIGHT
     private var profile: EditorProfile = EditorProfile.from(null)
@@ -301,10 +300,10 @@ class VBoardImeService : InputMethodService() {
         // The clipboard exists before the views do, and its master switch must
         // take effect (and delete the file) whether or not a keyboard is up.
         clipboard.setHistoryEnabled(s.clipboardHistoryEnabled)
-        if (s.clipboardClearedAt > lastClipboardClearedAt) {
-            lastClipboardClearedAt = s.clipboardClearedAt
-            clipboard.deleteAll()
-        }
+        // Expressed as "delete everything copied before then" rather than a
+        // wipe: the stored timestamp is replayed on every keyboard start, and a
+        // wipe would then keep eating clips copied since the user cleared.
+        if (s.clipboardClearedAt > 0L) clipboard.clearCapturedBefore(s.clipboardClearedAt)
         if (!::keyboardView.isInitialized) return
         keyboardView.hapticsEnabled = s.hapticsEnabled
         keyboardView.keyPreviewEnabled = s.keyPreviewEnabled

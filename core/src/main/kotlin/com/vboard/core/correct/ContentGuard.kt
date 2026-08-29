@@ -32,6 +32,14 @@ object ContentGuard {
     private const val PLACEHOLDER_TAIL = "x"
 
     /**
+     * Punctuation [com.vboard.core.text.Tokenizer] recognizes. Anything else it
+     * silently deletes, so a chunk made only of punctuation still has to be
+     * shielded when it contains something from outside this set — otherwise a
+     * lone `{` in pasted code just vanishes.
+     */
+    private val TOKENIZER_SAFE_PUNCT = ".,!?;:\"“”&@#%()-—…'".toSet()
+
+    /**
      * The masked form of one piece of text plus the spans needed to put it back.
      *
      * Deliberately not a data class: the shielded spans are user content and
@@ -42,8 +50,8 @@ object ContentGuard {
         private val spans: List<String>,
         private val prefix: String,
         /**
-         * True when the last non-whitespace chunk ended with a shielded span, so
-         * callers know not to staple a terminal period onto a URL.
+         * True when the last non-whitespace chunk ended with a shielded *address*
+         * span, so callers know not to staple a terminal period onto a URL.
          */
         val endsWithShieldedSpan: Boolean,
     ) {
@@ -85,23 +93,42 @@ object ContentGuard {
             var coreEnd = chunk.length
             while (coreEnd > coreStart && chunk[coreEnd - 1] in TRAIL_TRIM) coreEnd--
             val core = chunk.substring(coreStart, coreEnd)
-            if (core.isNotEmpty() && needsShield(core)) {
-                out.append(chunk, 0, coreStart)
-                out.append(prefix).append(spans.size).append(PLACEHOLDER_TAIL)
-                spans.add(core)
-                out.append(chunk, coreEnd, chunk.length)
-                // A trailing "." that was peeled off is real punctuation and stays
-                // in the prose stream, so only a chunk that *ends* in its span
-                // suppresses terminal punctuation.
-                endsWithSpan = coreEnd == chunk.length
-            } else {
-                out.append(chunk)
-                endsWithSpan = false
+            val shieldWholeChunk = core.isEmpty() &&
+                chunk.any { it !in TOKENIZER_SAFE_PUNCT }
+            when {
+                shieldWholeChunk -> {
+                    out.append(prefix).append(spans.size).append(PLACEHOLDER_TAIL)
+                    spans.add(chunk)
+                    endsWithSpan = false
+                }
+                core.isNotEmpty() && needsShield(core) -> {
+                    out.append(chunk, 0, coreStart)
+                    out.append(prefix).append(spans.size).append(PLACEHOLDER_TAIL)
+                    spans.add(core)
+                    out.append(chunk, coreEnd, chunk.length)
+                    // A trailing "." that was peeled off is real punctuation and
+                    // stays in the prose stream, so only a chunk that *ends* in
+                    // its span can suppress terminal punctuation — and then only
+                    // when the span is an address, where a stapled-on full stop
+                    // would be copied along with the link.
+                    endsWithSpan = coreEnd == chunk.length && looksLikeAddress(core)
+                }
+                else -> {
+                    out.append(chunk)
+                    endsWithSpan = false
+                }
             }
             i = end
         }
         return Shield(out.toString(), spans, prefix, endsWithSpan)
     }
+
+    /** URLs, email addresses and paths — things a trailing period would spoil. */
+    fun looksLikeAddress(core: String): Boolean =
+        core.contains("://") ||
+            core.startsWith("www.", ignoreCase = true) ||
+            core.contains('/') ||
+            (core.contains('@') && core.contains('.'))
 
     /** True when the cleaner must not be allowed to touch [core]. */
     fun needsShield(core: String): Boolean {

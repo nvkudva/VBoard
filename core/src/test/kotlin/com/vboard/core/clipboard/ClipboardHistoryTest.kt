@@ -294,6 +294,52 @@ class ClipboardHistoryTest {
         assertNull(history.chip())
     }
 
+    @Test
+    fun `a clear cutoff removes everything copied before it, pinned included`() {
+        store("old")
+        history.pin("old")
+        clock.advanceSeconds(10)
+        val cutoff = clock.now
+        clock.advanceSeconds(10)
+        store("new")
+
+        assertTrue(history.deleteCapturedBefore(cutoff))
+        assertEquals(listOf("new"), history.persistable().map { it.text })
+    }
+
+    @Test
+    fun `a clear cutoff spares anything copied after it`() {
+        val cutoff = clock.now
+        clock.advanceSeconds(10)
+        store("after the clear")
+        assertFalse(history.deleteCapturedBefore(cutoff))
+        assertEquals(listOf("after the clear"), history.persistable().map { it.text })
+    }
+
+    @Test
+    fun `replaying the same clear cutoff is a no-op`() {
+        // The IME sees the settings screen's cutoff again on every restart; it
+        // must not be able to eat clips copied since.
+        store("before")
+        clock.advanceSeconds(5)
+        val cutoff = clock.now
+        clock.advanceSeconds(5)
+        store("since")
+
+        assertTrue(history.deleteCapturedBefore(cutoff))
+        assertFalse(history.deleteCapturedBefore(cutoff))
+        assertFalse(history.deleteCapturedBefore(cutoff))
+        assertEquals(listOf("since"), history.persistable().map { it.text })
+    }
+
+    @Test
+    fun `a clear cutoff drops a session-only clip captured before it`() {
+        history.offer("483920")
+        clock.advanceSeconds(5)
+        assertTrue(history.deleteCapturedBefore(clock.now))
+        assertNull(history.chip())
+    }
+
     // ----------------------------------------------------------- persistence
 
     @Test

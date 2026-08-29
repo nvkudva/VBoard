@@ -68,6 +68,14 @@ class ClipboardRepository(
     private var loaded = false
 
     /**
+     * The newest "delete everything" the settings screen has asked for. Held as a
+     * cutoff rather than applied as a wipe so it survives being replayed: the IME
+     * sees the same stored timestamp again on every start, and re-applying it
+     * must never eat clips copied since.
+     */
+    private var clearCutoff = 0L
+
+    /**
      * Clips that arrived before the on-disk store finished loading. Replayed in
      * order once it has, so a copy made during keyboard startup is not lost and
      * cannot be clobbered by the restore that follows it.
@@ -145,6 +153,22 @@ class ClipboardRepository(
         changeListener?.onClipsChanged()
     }
 
+    /**
+     * Applies a "delete all" issued from the settings screen, identified by when
+     * it happened. Safe to call with the same timestamp any number of times, and
+     * safe to call before the store has loaded: the cutoff is re-applied to
+     * whatever the load brings back.
+     */
+    fun clearCapturedBefore(cutoffMillis: Long) {
+        if (cutoffMillis <= clearCutoff) return
+        clearCutoff = cutoffMillis
+        if (!loaded) return
+        if (history.deleteCapturedBefore(cutoffMillis)) {
+            store.saveNow(history.serialize())
+            changeListener?.onClipsChanged()
+        }
+    }
+
     // ----------------------------------------------------------------- capture
 
     /**
@@ -207,10 +231,10 @@ class ClipboardRepository(
     }
 
     /**
-     * The flag is [ClipDescription.EXTRA_IS_SENSITIVE], added in API 33. It is
-     * referenced by name rather than by constant so the code compiles and reads
-     * identically on the API 29 devices this app supports, where the key is
-     * simply absent.
+     * The flag is `ClipDescription.EXTRA_IS_SENSITIVE`, added in API 33. The key
+     * is spelled out rather than referenced through the constant so this compiles
+     * and behaves identically on the API 29 devices the app supports, where the
+     * constant does not exist and the key is simply never present.
      */
     private fun ClipDescription.isMarkedSensitive(): Boolean =
         extras?.getBoolean(EXTRA_IS_SENSITIVE, false) == true
@@ -222,8 +246,6 @@ class ClipboardRepository(
     fun pinnedClips(): List<ClipEntry> = if (historyEnabled) history.pinned() else emptyList()
 
     fun recentClips(): List<ClipEntry> = if (historyEnabled) history.recent() else emptyList()
-
-    fun hasClips(): Boolean = historyEnabled && !history.isEmpty()
 
     /** The clip to offer in the suggestion strip right now, or null. */
     fun chip(): ClipEntry? = if (historyEnabled) history.chip() else null
@@ -282,12 +304,16 @@ class ClipboardRepository(
                 changeListener?.onClipsChanged()
                 return@launch
             }
+            // A clear that arrived while the load was in flight applies to what
+            // the load just brought back, not only to what was already here.
+            var dirty = clearCutoff > 0L && history.deleteCapturedBefore(clearCutoff)
             val queued = deferred.toList()
             deferred.clear()
             for (clip in queued) {
                 history.offer(clip.text, clip.context, clip.sensitive)
             }
-            if (queued.isNotEmpty()) store.scheduleSave(history.serialize())
+            dirty = dirty || queued.isNotEmpty()
+            if (dirty) store.scheduleSave(history.serialize())
             changeListener?.onClipsChanged()
         }
     }

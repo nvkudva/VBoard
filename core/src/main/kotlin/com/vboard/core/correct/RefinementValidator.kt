@@ -99,6 +99,13 @@ object RefinementValidator {
         if (cleaned.isNullOrEmpty()) return RefinementVerdict.reject(RejectReason.EMPTY)
         if (cleaned.contains("<|")) return RefinementVerdict.reject(RejectReason.TEMPLATE_LEAK)
 
+        // Commentary is checked before the length band: "Sure, here's the
+        // corrected text: …" is also too long, and the specific diagnosis is the
+        // useful one.
+        if (hasAddedCommentary(original, cleaned)) {
+            return RefinementVerdict.reject(RejectReason.COMMENTARY)
+        }
+
         if (original.isNotEmpty()) {
             val ratio = cleaned.length.toDouble() / original.length
             if (ratio < MIN_LENGTH_RATIO) return RefinementVerdict.reject(RejectReason.TOO_SHORT)
@@ -109,10 +116,6 @@ object RefinementValidator {
             if (!cleaned.contains(entity)) {
                 return RefinementVerdict.reject(RejectReason.DROPPED_ENTITY)
             }
-        }
-
-        if (hasAddedCommentary(original, cleaned)) {
-            return RefinementVerdict.reject(RejectReason.COMMENTARY)
         }
 
         if (original.length >= SIMILARITY_MIN_INPUT_CHARS &&
@@ -160,10 +163,25 @@ object RefinementValidator {
      * did not — "here's the thing" as a message must not be mistaken for one.
      */
     private fun hasAddedCommentary(original: String, candidate: String): Boolean {
-        val candidateStart = candidate.lowercase()
-        val originalStart = original.lowercase()
+        val candidateStart = normalizeForPrefix(candidate)
+        val originalStart = normalizeForPrefix(original)
         return COMMENTARY_PREFIXES.any { prefix ->
-            candidateStart.startsWith(prefix) && !originalStart.startsWith(prefix)
+            val normalized = normalizeForPrefix(prefix)
+            candidateStart.startsWith(normalized) && !originalStart.startsWith(normalized)
+        }
+    }
+
+    /**
+     * Folds away the punctuation and casing the model may have added, so a user
+     * who typed "heres the plan" is recognized in a result that reads "Here's
+     * the plan." and is not mistaken for the model editorializing.
+     */
+    private fun normalizeForPrefix(text: String): String = buildString {
+        for (ch in text) {
+            when {
+                ch.isLetterOrDigit() -> append(ch.lowercaseChar())
+                ch.isWhitespace() -> if (isNotEmpty() && last() != ' ') append(' ')
+            }
         }
     }
 

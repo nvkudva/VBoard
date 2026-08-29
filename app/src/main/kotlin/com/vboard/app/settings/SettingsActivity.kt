@@ -33,6 +33,9 @@ class SettingsActivity : ComponentActivity() {
                     onSetString = { key, value ->
                         lifecycleScope.launch { app.settings.setString(key, value) }
                     },
+                    onSetLong = { key, value ->
+                        lifecycleScope.launch { app.settings.setLong(key, value) }
+                    },
                     onOpenModelDownloads = {
                         startActivity(OnboardingActivity.modelsIntent(this@SettingsActivity))
                     },

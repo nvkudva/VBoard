@@ -182,6 +182,25 @@ class ClipboardHistory(
         chipDismissedAt = clock.nowMillis()
     }
 
+    /**
+     * Deletes everything captured at or before [cutoffMillis], pinned included.
+     *
+     * This is how a "delete all" issued somewhere else — the settings screen —
+     * reaches a history that may not even have finished loading yet. Phrasing it
+     * as a cutoff rather than a wipe makes it idempotent and order-independent:
+     * replaying an old cutoff removes nothing that was copied after it, so a
+     * keyboard starting up cannot undo a clear, and cannot over-apply one either.
+     *
+     * Returns true when something was actually removed.
+     */
+    fun deleteCapturedBefore(cutoffMillis: Long): Boolean {
+        val before = entries.size
+        entries.removeAll { it.capturedAtMillis <= cutoffMillis }
+        val sessionDropped = sessionOnly?.let { it.capturedAtMillis <= cutoffMillis } == true
+        if (sessionDropped) sessionOnly = null
+        return entries.size != before || sessionDropped
+    }
+
     /** Drops the in-memory-only clip. Called when the IME is destroyed. */
     fun clearSessionOnly() {
         sessionOnly = null

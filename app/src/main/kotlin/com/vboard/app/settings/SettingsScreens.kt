@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import android.util.Log
 import androidx.datastore.preferences.core.Preferences
 import com.vboard.app.R
+import com.vboard.app.clipboard.ClipboardStore
 import com.vboard.app.keyboard.ThemeMode
 import com.vboard.app.models.ModelDownloadService
 import com.vboard.app.voice.VoiceEngines
@@ -88,6 +89,7 @@ fun SettingsScreen(
     appVersion: String,
     onSetBoolean: (Preferences.Key<Boolean>, Boolean) -> Unit,
     onSetString: (Preferences.Key<String>, String) -> Unit,
+    onSetLong: (Preferences.Key<Long>, Long) -> Unit,
     onOpenModelDownloads: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -103,6 +105,7 @@ fun SettingsScreen(
     }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showAutocorrectDialog by remember { mutableStateOf(false) }
+    var showClipboardDeleteDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<ModelPack?>(null) }
 
     val llmPack = ModelCatalog.byKind(ModelKind.REFINER_LLM).firstOrNull()
@@ -129,8 +132,8 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // ------------------------------------------------------- Typing
-            item { SectionHeader(stringResource(R.string.settings_group_typing)) }
+            // --------------------------------------------------- Appearance
+            item { SectionHeader(stringResource(R.string.settings_group_appearance)) }
             item {
                 ChoiceRow(
                     title = stringResource(R.string.settings_theme),
@@ -138,6 +141,17 @@ fun SettingsScreen(
                     onClick = { showThemeDialog = true },
                 )
             }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.settings_number_row),
+                    subtitle = stringResource(R.string.settings_number_row_subtitle),
+                    checked = snapshot.numberRowEnabled,
+                    onCheckedChange = { onSetBoolean(SettingsRepository.Keys.NUMBER_ROW, it) },
+                )
+            }
+
+            // ------------------------------------------------------- Typing
+            item { SectionHeader(stringResource(R.string.settings_group_typing)) }
             item {
                 SwitchRow(
                     title = stringResource(R.string.settings_haptics),
@@ -182,6 +196,50 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_autocorrect),
                     value = autocorrectLabel(snapshot.autocorrectMode),
                     onClick = { showAutocorrectDialog = true },
+                )
+            }
+
+            // ---------------------------------------------------- Clipboard
+            item { SectionHeader(stringResource(R.string.settings_group_clipboard)) }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.settings_clipboard_history),
+                    subtitle = stringResource(R.string.settings_clipboard_history_subtitle),
+                    checked = snapshot.clipboardHistoryEnabled,
+                    onCheckedChange = { enabled ->
+                        onSetBoolean(SettingsRepository.Keys.CLIPBOARD_HISTORY, enabled)
+                        // Turning it off is a promise that nothing is left on
+                        // disk, so the file goes now rather than whenever a
+                        // keyboard next happens to be running.
+                        if (!enabled) {
+                            scope.launch(Dispatchers.IO) { ClipboardStore.deleteBlocking(context) }
+                        }
+                    },
+                )
+            }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.settings_clipboard_suggestions),
+                    subtitle = stringResource(R.string.settings_clipboard_suggestions_subtitle),
+                    checked = snapshot.clipboardSuggestionsEnabled,
+                    enabled = snapshot.clipboardHistoryEnabled,
+                    onCheckedChange = {
+                        onSetBoolean(SettingsRepository.Keys.CLIPBOARD_SUGGESTIONS, it)
+                    },
+                )
+            }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable { showClipboardDeleteDialog = true },
+                    headlineContent = {
+                        Text(
+                            text = stringResource(R.string.settings_clipboard_delete_all),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    supportingContent = {
+                        Text(stringResource(R.string.settings_clipboard_delete_all_subtitle))
+                    },
                 )
             }
 
@@ -352,6 +410,38 @@ fun SettingsScreen(
             label = { autocorrectLabel(it) },
             onSelect = { onSetString(SettingsRepository.Keys.AUTOCORRECT, it.name) },
             onDismiss = { showAutocorrectDialog = false },
+        )
+    }
+
+    if (showClipboardDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showClipboardDeleteDialog = false },
+            title = { Text(stringResource(R.string.settings_clipboard_delete_all_confirm)) },
+            text = { Text(stringResource(R.string.settings_clipboard_delete_all_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClipboardDeleteDialog = false
+                        scope.launch(Dispatchers.IO) { ClipboardStore.deleteBlocking(context) }
+                        // A running keyboard holds its own copy in memory. This
+                        // timestamp is what tells it to let go of it.
+                        onSetLong(
+                            SettingsRepository.Keys.CLIPBOARD_CLEARED_AT,
+                            System.currentTimeMillis(),
+                        )
+                    },
+                ) {
+                    Text(
+                        text = stringResource(R.string.dialog_delete),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClipboardDeleteDialog = false }) {
+                    Text(stringResource(R.string.dialog_cancel))
+                }
+            },
         )
     }
 
