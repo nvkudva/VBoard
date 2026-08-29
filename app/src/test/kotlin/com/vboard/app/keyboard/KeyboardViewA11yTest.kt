@@ -60,9 +60,14 @@ class KeyboardViewA11yTest {
 
     @After
     fun tearDown() {
+        // Order matters. Tearing the window down flushes the accessibility sends
+        // the framework has queued, and those go through
+        // `sendAccessibilityEventUnchecked` — which, as the name says, does not
+        // check whether accessibility is on. Switching it off first makes that
+        // flush throw "Accessibility off. Did you forget to check that?".
+        controller.destroy()
         // ShadowAccessibilityManager holds this in static state.
         setTouchExploration(false)
-        controller.destroy()
     }
 
     // ------------------------------------------------------------ node counts
@@ -180,6 +185,10 @@ class KeyboardViewA11yTest {
 
     @Test
     fun `activating a node types the key`() {
+        // Deliberately runs with no accessibility service enabled: an action can
+        // arrive from instrumentation, or from a service that disconnects
+        // between querying the node and activating it. Sending the click event
+        // unguarded throws IllegalStateException and takes the IME down.
         val view = keyboard()
         assertTrue(
             view.a11yProviderForTest().performAction(

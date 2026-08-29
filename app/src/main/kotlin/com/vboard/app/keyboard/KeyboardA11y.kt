@@ -38,11 +38,9 @@ internal object KeyboardA11y {
      *
      * Two things hang off this: key previews are suppressed (they occlude the
      * finger's own exploration), and touch is delivered as hover, so the views
-     * switch to lift-to-type.
+     * switch to lift-to-type. Takes the manager rather than a Context because
+     * the views resolve it once and keep it — this is read on every ACTION_DOWN.
      */
-    fun touchExplorationEnabled(context: Context): Boolean =
-        touchExploring(manager(context))
-
     fun touchExploring(manager: AccessibilityManager?): Boolean =
         manager != null && manager.isEnabled && manager.isTouchExplorationEnabled
 
@@ -308,8 +306,20 @@ internal abstract class VirtualCells(private val host: View) {
         accessibilityFocusedId = NO_CELL
     }
 
+    /**
+     * Posts one event for a virtual cell.
+     *
+     * The `isEnabled` check is not an optimisation. `requestSendAccessibilityEvent`
+     * lands in `AccessibilityManager.sendAccessibilityEvent`, which *throws*
+     * `IllegalStateException("Accessibility off. Did you forget to check that?")`
+     * when it is called on the main looper with no service listening — the same
+     * reason `ExploreByTouchHelper` gates its own sends. That is reachable: a
+     * `performAction` can arrive from instrumentation, or from a service that
+     * disconnects between querying the node and activating it, and an IME that
+     * throws there takes the user's keyboard down mid-sentence.
+     */
     fun sendEvent(id: Int, eventType: Int) {
-        if (id == NO_CELL) return
+        if (id == NO_CELL || manager?.isEnabled != true) return
         val parent = host.parent ?: return
         @Suppress("DEPRECATION") // AccessibilityEvent() is API 30; minSdk here is 29.
         val event = AccessibilityEvent.obtain(eventType)
