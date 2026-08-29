@@ -44,61 +44,62 @@ class ModelReadinessTest {
     // ------------------------------------------------------ required set
 
     @Test
-    fun `only the streaming pack is required, so setup asks for one download`() {
-        assertEquals(listOf(streaming.id), ModelCatalog.requiredPacks.map { it.id })
-        assertEquals(
-            listOf(parakeet.id, refiner.id),
-            ModelCatalog.optionalPacks.map { it.id },
-        )
+    fun `both speech packs are required and only the refiner is optional`() {
+        assertEquals(listOf(streaming.id, parakeet.id), ModelCatalog.requiredPacks.map { it.id })
+        assertEquals(listOf(refiner.id), ModelCatalog.optionalPacks.map { it.id })
     }
 
     @Test
-    fun `required is exactly the set dictation cannot run without`() {
-        // If these ever diverge, one of the two definitions is lying to the user: either
-        // setup blocks on a pack dictation does not need, or it lets them finish without
-        // one it does.
+    fun `anything dictation cannot run without must be required`() {
+        // One-directional on purpose. A pack dictation technically survives without may
+        // still be required for quality - the accuracy pass is exactly that case. What
+        // must never happen is the reverse: setup letting someone finish without a pack
+        // the mic genuinely cannot work without.
         val installedIds = ModelCatalog.packs.map { it.id }.toSet()
         for (pack in ModelCatalog.packs) {
-            val withoutIt = installedIds - pack.id
-            assertEquals(
-                pack.required,
-                !ModelReadiness.canDictate(withoutIt),
-                "${pack.id}: required=${pack.required} but canDictate-without=${ModelReadiness.canDictate(withoutIt)}",
-            )
+            if (!ModelReadiness.canDictate(installedIds - pack.id)) {
+                assertTrue(pack.required, "${pack.id} is load-bearing for dictation but not required")
+            }
         }
+        // And the refiner, which only rewrites already-committed text, is never required.
+        assertFalse(refiner.required)
     }
 
     @Test
-    fun `missingRequired names only what still blocks dictation`() {
-        assertEquals(listOf(streaming.id), ModelReadiness.missingRequired(emptySet()).map { it.id })
+    fun `missingRequired names what setup still has to fetch`() {
         assertEquals(
-            emptyList(),
+            listOf(streaming.id, parakeet.id),
+            ModelReadiness.missingRequired(emptySet()).map { it.id },
+        )
+        assertEquals(
+            listOf(parakeet.id),
             ModelReadiness.missingRequired(setOf(streaming.id)).map { it.id },
         )
-        // The optional packs never appear here, installed or not.
+        // The refiner never appears here, installed or not.
         assertEquals(
             emptyList(),
-            ModelReadiness.missingRequired(setOf(streaming.id, parakeet.id, refiner.id)).map { it.id },
+            ModelReadiness.missingRequired(setOf(streaming.id, parakeet.id)).map { it.id },
         )
     }
 
     @Test
-    fun `remaining required bytes is the streaming pack, then zero`() {
-        assertEquals(streaming.totalBytes, ModelReadiness.remainingRequiredBytes(emptySet()))
-        assertEquals(0L, ModelReadiness.remainingRequiredBytes(setOf(streaming.id)))
-        // Installing an optional pack does not reduce it, because it never counted.
+    fun `remaining required bytes covers both speech packs, then zero`() {
         assertEquals(
-            streaming.totalBytes,
-            ModelReadiness.remainingRequiredBytes(setOf(parakeet.id, refiner.id)),
+            streaming.totalBytes + parakeet.totalBytes,
+            ModelReadiness.remainingRequiredBytes(emptySet()),
+        )
+        assertEquals(parakeet.totalBytes, ModelReadiness.remainingRequiredBytes(setOf(streaming.id)))
+        assertEquals(0L, ModelReadiness.remainingRequiredBytes(setOf(streaming.id, parakeet.id)))
+        // Installing the optional refiner does not reduce it, because it never counted.
+        assertEquals(
+            streaming.totalBytes + parakeet.totalBytes,
+            ModelReadiness.remainingRequiredBytes(setOf(refiner.id)),
         )
     }
 
     @Test
     fun `upgrades on offer shrink as optional packs are installed`() {
-        assertEquals(
-            listOf(parakeet.id, refiner.id),
-            ModelReadiness.availableUpgrades(setOf(streaming.id)).map { it.id },
-        )
+        // Only the refiner is an upgrade now; the accuracy pass is part of the product.
         assertEquals(
             listOf(refiner.id),
             ModelReadiness.availableUpgrades(setOf(streaming.id, parakeet.id)).map { it.id },

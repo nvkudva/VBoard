@@ -12,6 +12,7 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeProvider
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.ScrollView
@@ -159,9 +160,13 @@ class ClipboardPanelView(
             recent.chunked(COLUMNS).forEach { built.add(Cell.Row(it)) }
         }
         cells = built
-        grid.requestLayout()
-        grid.invalidate()
+        grid.onCellsChanged()
     }
+
+    /** Test seams: the panel's two canvases, each with its own node provider. */
+    internal fun gridForTest(): View = grid
+
+    internal fun bottomBarForTest(): View = bottomBar
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(
@@ -201,6 +206,11 @@ class ClipboardPanelView(
             longPressFired = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             showActionMenu(entry, downY)
+        }
+
+        init {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            contentDescription = context.getString(R.string.a11y_clipboard_empty)
         }
 
         private val cardHeight get() = dp(CARD_HEIGHT_DP)
@@ -322,25 +332,32 @@ class ClipboardPanelView(
             }
         }
 
-        private fun entryAt(x: Float, y: Float): ClipEntry? {
+        private fun entryAt(x: Float, y: Float): ClipEntry? =
+            cardRects().firstOrNull { (_, rect) -> rect.contains(x, y) }?.first
+
+        /**
+         * The flattened card list in reading order, with the bounds [onDraw]
+         * gives each one. Also the accessibility node order — a screen reader
+         * walks pinned clips first, then recent, exactly as the panel reads.
+         */
+        private fun cardRects(): List<Pair<ClipEntry, RectF>> {
+            if (width == 0) return emptyList()
             val cardWidth = (width - 2 * side - gap) / COLUMNS
+            val rects = mutableListOf<Pair<ClipEntry, RectF>>()
             var top = gap
             for (cell in cells) {
                 when (cell) {
                     is Cell.Header -> top += headerHeight
                     is Cell.Row -> {
-                        if (y >= top && y <= top + cardHeight) {
-                            for ((column, entry) in cell.entries.withIndex()) {
-                                val left = side + column * (cardWidth + gap)
-                                if (x >= left && x <= left + cardWidth) return entry
-                            }
-                            return null
+                        for ((column, entry) in cell.entries.withIndex()) {
+                            val left = side + column * (cardWidth + gap)
+                            rects.add(entry to RectF(left, top, left + cardWidth, top + cardHeight))
                         }
                         top += cardHeight + gap
                     }
                 }
             }
-            return null
+            return rects
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -397,6 +414,68 @@ class ClipboardPanelView(
             handler2.removeCallbacks(longPressRunnable)
             super.onDetachedFromWindow()
         }
+
+        // ---------------------------------------------------------- accessibility
+
+        /** The card list was rebuilt; drop stale focus and re-measure. */
+        fun onCellsChanged() {
+            a11y.reset()
+            a11y.notifyContentChanged()
+            contentDescription = if (cells.isEmpty()) {
+                context.getString(R.string.a11y_clipboard_empty)
+            } else {
+                null
+            }
+            requestLayout()
+            invalidate()
+        }
+
+        /**
+         * One node per card. The description carries the clip's own text, which
+         * is correct — it is spoken to the person whose clipboard it is. It is
+         * never written anywhere: nothing in this class logs, and the preview is
+         * bounded so a 5,000-character clip is not read out in full.
+         */
+        private val a11y = object : VirtualCells(this) {
+            override fun count(): Int = cardRects().size
+
+            override fun boundsOf(id: Int): RectF? = cardRects().getOrNull(id)?.second
+
+            override fun descriptionOf(id: Int): CharSequence? {
+                val entry = cardRects().getOrNull(id)?.first ?: return null
+                val preview = entry.text
+                    .replace('\n', ' ')
+                    .take(A11Y_PREVIEW_CHARS)
+                    .trim()
+                return context.getString(
+                    if (entry.pinned) R.string.a11y_clip_pinned else R.string.a11y_clip,
+                    preview,
+                )
+            }
+
+            override fun clickLabelOf(id: Int): CharSequence? =
+                context.getString(R.string.a11y_action_paste)
+
+            override fun longClickLabelOf(id: Int): CharSequence? =
+                context.getString(R.string.a11y_action_clip_options)
+
+            override fun click(id: Int): Boolean {
+                val entry = cardRects().getOrNull(id)?.first ?: return false
+                listener?.onClipPicked(entry)
+                return true
+            }
+
+            override fun longClick(id: Int): Boolean {
+                val (entry, rect) = cardRects().getOrNull(id) ?: return false
+                showActionMenu(entry, rect.centerY())
+                return true
+            }
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+        override fun onHoverEvent(event: MotionEvent): Boolean =
+            if (a11y.onHover(event)) true else super.onHoverEvent(event)
     }
 
     // ------------------------------------------------------------- bottom bar
@@ -405,6 +484,10 @@ class ClipboardPanelView(
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textAlign = Paint.Align.CENTER
             textSize = sp(15f)
+        }
+
+        init {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -421,10 +504,48 @@ class ClipboardPanelView(
             }
             return true
         }
+
+        private val a11y = object : VirtualCells(this) {
+            override fun count(): Int = 2
+
+            override fun boundsOf(id: Int): RectF? {
+                if (width == 0) return null
+                val half = width / 2f
+                return when (id) {
+                    0 -> RectF(0f, 0f, half, height.toFloat())
+                    1 -> RectF(half, 0f, width.toFloat(), height.toFloat())
+                    else -> null
+                }
+            }
+
+            override fun descriptionOf(id: Int): CharSequence? = when (id) {
+                0 -> context.getString(R.string.a11y_letters)
+                1 -> context.getString(R.string.a11y_backspace)
+                else -> null
+            }
+
+            override fun click(id: Int): Boolean = when (id) {
+                0 -> { listener?.onBackToLetters(); true }
+                1 -> { listener?.onBackspace(); true }
+                else -> false
+            }
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+        override fun onHoverEvent(event: MotionEvent): Boolean =
+            if (a11y.onHover(event)) true else super.onHoverEvent(event)
     }
 
     private companion object {
         const val COLUMNS = 2
+
+        /**
+         * How much of a clip a screen reader reads. Long enough to identify the
+         * clip, short enough that a paragraph is not read out in full before the
+         * user can move on.
+         */
+        const val A11Y_PREVIEW_CHARS = 120
         const val CARD_HEIGHT_DP = 78f
         const val CARD_GAP_DP = 8f
         const val HEADER_HEIGHT_DP = 30f

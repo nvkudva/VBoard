@@ -38,11 +38,12 @@ class ModelCatalogTest {
         val parakeet = ModelCatalog.byId("parakeet-tdt-0.6b-v2")!!
         val refiner = ModelCatalog.byId("qwen25-05b-refiner")!!
 
-        // Only the streaming recognizer is required: it is the one pack without which the
-        // mic key cannot produce words. Parakeet re-scores an already-transcribed utterance
-        // and the refiner rewrites already-committed text, so both are opt-in upgrades.
+        // Both speech models are required. The streaming pack is what makes the mic
+        // produce words at all; the accuracy pass is required because streaming-only
+        // output is not good enough to be the product's typing experience. Only the
+        // refiner - which rewrites already-committed text - is an opt-in upgrade.
         assertTrue(zipformer.required)
-        assertFalse(parakeet.required)
+        assertTrue(parakeet.required)
         assertFalse(refiner.required)
 
         assertTrue(zipformer.files.single().archive)

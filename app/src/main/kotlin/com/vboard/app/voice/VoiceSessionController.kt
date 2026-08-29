@@ -8,11 +8,14 @@ import com.vboard.app.VBoardApp
 import com.vboard.app.R
 import com.vboard.core.model.ModelCatalog
 import com.vboard.core.model.ModelKind
+import com.vboard.core.session.AudioPipeline
 import com.vboard.core.session.DictationStateMachine
 import com.vboard.core.session.DictationStateMachine.Effect
 import com.vboard.core.session.DictationStateMachine.ErrorKind
 import com.vboard.core.session.DictationStateMachine.Event
+import com.vboard.core.session.FinalTranscriptPolicy
 import com.vboard.core.text.CleanupRequest
+import com.vboard.core.text.CleanupResult
 import com.vboard.core.text.FieldKind
 import com.vboard.core.text.UtteranceCommand
 import com.vboard.app.settings.SettingsSnapshot
@@ -50,6 +53,13 @@ import kotlin.coroutines.coroutineContext
  *  - the final ASR decode gets its own single thread: decodes cannot overlap,
  *    and a slow one cannot starve Dispatchers.Default (which the suggestion
  *    strip also runs on).
+ *
+ * Reading and decoding are deliberately separate coroutines with an
+ * [AudioPipeline] between them (VB-106). The reader does nothing but read,
+ * buffer and hand off; it never touches the main thread and never waits on the
+ * decoder. That is what stops a slow decode — or a busy UI thread — from
+ * silently overrunning the ~400ms AudioRecord buffer, which used to hand
+ * Parakeet audio with holes in it and make the model look inaccurate.
  */
 class VoiceSessionController(
     private val service: Context,
@@ -86,26 +96,40 @@ class VoiceSessionController(
 
     private val capture = AudioCapture()
     private var audioJob: Job? = null
-    private var silenceJob: Job? = null
+    private var monitorJob: Job? = null
     private var prepareJob: Job? = null
     private var finalizeJob: Job? = null
     private var audioTeardownJob: Job? = null
+
+    /**
+     * Focus is requested when the session enters Listening and abandoned from
+     * [stopAudio], i.e. on every path out of it. The callback lands on the main
+     * thread, which is where the state machine lives.
+     */
+    private val focus = AudioFocusGuard(service) { reason ->
+        Log.w(TAG, "microphone interrupted: $reason")
+        scope.launch { dispatch(Event.AudioFocusLost) }
+    }
 
     /** True between a stop request and the reader actually exiting. */
     @Volatile
     private var audioStopRequested = false
 
     /**
-     * Raw samples of the in-flight utterance, for the Parakeet re-pass.
-     *
-     * Appended from the reader thread and drained from the main thread when an
-     * utterance finalizes, so every access goes through [utteranceLock]. Sizing
-     * a FloatArray from a count while the list behind it was still growing threw
-     * IndexOutOfBounds on the single most common gesture there is.
+     * Buffers the in-flight utterance for the Parakeet re-pass and hands chunks
+     * to the streaming decoder. Recreated per session; see [AudioPipeline] for
+     * why the two sides have different loss guarantees.
      */
-    private val utteranceLock = Any()
-    private val utteranceAudio = ArrayList<FloatArray>(64)
-    private var utteranceSamples = 0
+    private var pipeline: AudioPipeline? = null
+
+    /**
+     * Latest chunk level, published by the reader and read by the monitor tick.
+     * The reader used to hop to the main thread once per 100ms chunk to deliver
+     * this, which meant a busy UI thread could stall the microphone read loop —
+     * the exact stall that overruns the capture buffer.
+     */
+    @Volatile
+    private var latestAmplitude = 0f
 
     private var lastSpeechAt = 0L
 
@@ -242,10 +266,12 @@ class VoiceSessionController(
             dispatch(Event.ModelsMissing)
             return
         }
-        clearUtteranceAudio()
+        val pipe = AudioPipeline()
+        pipeline = pipe
         val now = System.currentTimeMillis()
         lastSpeechAt = now
         lastChunkAt = now
+        latestAmplitude = 0f
         audioStopRequested = false
         streaming.resetUtterance()
 
@@ -255,6 +281,10 @@ class VoiceSessionController(
         audioJob = scope.launch {
             // The previous record must be freed before we open the next one.
             pendingTeardown?.join()
+            // VB-123: hold focus for the length of the session, so other apps
+            // stop playing into the microphone and the platform tells us when
+            // something more important (a call) needs the audio path.
+            focus.request()
             val started = withContext(audioDispatcher) {
                 try {
                     capture.start()
@@ -271,6 +301,7 @@ class VoiceSessionController(
                 }
             }
             if (!started) {
+                focus.abandon()
                 dispatch(Event.AudioError)
                 return@launch
             }
@@ -279,15 +310,39 @@ class VoiceSessionController(
             // out from under a decode is a native crash, not a dropped result.
             VoiceEngines.beginUse()
             try {
-                withContext(Dispatchers.IO) { readLoop(streaming) }
+                coroutineScope {
+                    val consumer = launch(streamDispatcher) { decodeLoop(streaming, pipe) }
+                    withContext(Dispatchers.IO) { readLoop(pipe) }
+                    // The reader has exited, so nothing more will be offered;
+                    // let the decoder finish what is already queued rather than
+                    // cutting a partial off mid-word.
+                    pipe.close()
+                    consumer.join()
+                }
             } finally {
                 VoiceEngines.endUse()
             }
         }
 
-        silenceJob = scope.launch {
+        monitorJob = scope.launch {
+            var tick = 0
             while (isActive) {
-                delay(WATCHDOG_TICK_MS)
+                delay(MONITOR_TICK_MS)
+                tick++
+                // Coalesced UI work: one main-thread update per tick regardless
+                // of how many chunks arrived, and the reader never waits for it.
+                host.onAmplitude(latestAmplitude)
+                val dropped = pipe.drainDroppedSamples()
+                if (dropped > 0) dispatch(Event.AudioOverrun(dropped))
+
+                if (tick % WATCHDOG_EVERY_N_TICKS != 0) continue
+                // A call can take the microphone without a focus callback ever
+                // arriving (or before it does), and a silent AudioRecord looks
+                // exactly like a quiet room. Poll for it.
+                if (focus.isCallActive()) {
+                    focus.reportCallActive()
+                    break
+                }
                 val elapsed = System.currentTimeMillis()
                 if (elapsed - lastChunkAt > AUDIO_STALL_TIMEOUT_MS) {
                     // Chunks arrive every ~100ms. Two seconds of nothing means the
@@ -296,7 +351,8 @@ class VoiceSessionController(
                     dispatch(Event.AudioError)
                     break
                 }
-                if (elapsed - lastSpeechAt > SILENCE_TIMEOUT_MS) {
+                val silenceLimit = settings.silenceTimeout.millis
+                if (silenceLimit != null && elapsed - lastSpeechAt > silenceLimit) {
                     dispatch(Event.SilenceTimeout)
                     break
                 }
@@ -304,9 +360,13 @@ class VoiceSessionController(
         }
     }
 
-    /** Runs on Dispatchers.IO; the sole owner of [AudioCapture.read]. */
-    private suspend fun readLoop(streaming: StreamingAsr) {
-        var lastPartial = ""
+    /**
+     * Producer. Runs on Dispatchers.IO, is the sole owner of [AudioCapture.read],
+     * and does nothing that can block on another thread: every chunk is buffered
+     * for the final pass and offered to the decoder, and that is all. Anything
+     * slower than the microphone in here is a driver overrun.
+     */
+    private suspend fun readLoop(pipe: AudioPipeline) {
         var failure: Int? = null
         while (coroutineContext.isActive) {
             when (val chunk = capture.read()) {
@@ -318,39 +378,10 @@ class VoiceSessionController(
                 is AudioCapture.Read.Chunk -> {
                     val samples = chunk.samples
                     lastChunkAt = System.currentTimeMillis()
-                    appendUtteranceAudio(samples)
-                    val rms = samples.rmsLevel()
-                    withContext(Dispatchers.Main.immediate) { host.onAmplitude(rms) }
-
-                    streaming.acceptAudio(samples)
-                    val partial = streaming.partialText()
-                    if (partial != lastPartial) {
-                        lastPartial = partial
-                        lastSpeechAt = System.currentTimeMillis()
-                        withContext(Dispatchers.Main.immediate) { dispatch(Event.Partial(partial)) }
-                    }
-                    if (streaming.isEndpoint()) {
-                        lastPartial = ""
-                        withContext(Dispatchers.Main.immediate) {
-                            val wasListening =
-                                machine.state is DictationStateMachine.State.Listening
-                            // Any finalize this triggers snapshots the buffer from
-                            // inside dispatch, so the reset has to come after it.
-                            dispatch(Event.EndpointDetected)
-                            // The recognizer stream is owned by this loop, which is
-                            // suspended for the duration of this block; resetting it
-                            // here rather than off the finalize path keeps it that
-                            // way.
-                            streaming.resetUtterance()
-                            if (wasListening &&
-                                machine.state is DictationStateMachine.State.Listening
-                            ) {
-                                // Endpoint on silence with nothing recognized: drop
-                                // the buffered dead air and keep listening.
-                                clearUtteranceAudio()
-                            }
-                        }
-                    }
+                    latestAmplitude = samples.rmsLevel()
+                    // Never lost for the final pass; may be dropped (and counted)
+                    // for the streaming decoder if it has fallen behind.
+                    pipe.offer(samples)
                 }
             }
         }
@@ -359,9 +390,52 @@ class VoiceSessionController(
             withContext(Dispatchers.Main.immediate) { dispatch(Event.AudioError) }
         } else if (failure == null && !audioStopRequested) {
             // The record stopped without us asking. Silent in the old code; the
-            // user simply spoke into nothing until the 30s silence timeout.
+            // user simply spoke into nothing until the silence timeout.
             Log.w(TAG, "audio capture ended unexpectedly")
             withContext(Dispatchers.Main.immediate) { dispatch(Event.AudioError) }
+        }
+    }
+
+    /**
+     * Consumer. Owns the streaming recognizer's stream, on a thread of its own
+     * so a slow decode delays only the live partial — never the microphone, and
+     * never the final pass.
+     */
+    private suspend fun decodeLoop(streaming: StreamingAsr, pipe: AudioPipeline) {
+        var lastPartial = ""
+        while (true) {
+            val chunk = pipe.take() ?: break
+            streaming.acceptAudio(chunk.samples)
+            val partial = streaming.partialText()
+            if (partial != lastPartial) {
+                lastPartial = partial
+                lastSpeechAt = System.currentTimeMillis()
+                // Partials go to the voice bar only (VB-103 is not implemented:
+                // this 20M-parameter stream would show the user wrong words
+                // being rewritten in their text field).
+                withContext(Dispatchers.Main.immediate) { dispatch(Event.Partial(partial)) }
+            }
+            if (streaming.isEndpoint()) {
+                lastPartial = ""
+                withContext(Dispatchers.Main.immediate) {
+                    val wasListening = machine.state is DictationStateMachine.State.Listening
+                    // Any finalize this triggers takes the utterance audio from
+                    // inside dispatch, split at this decoder's stream position,
+                    // so the reset has to come after it.
+                    dispatch(Event.EndpointDetected)
+                    // The recognizer stream is owned by this loop, which is
+                    // suspended for the duration of this block; resetting it
+                    // here rather than off the finalize path keeps it that way.
+                    streaming.resetUtterance()
+                    if (wasListening && machine.state is DictationStateMachine.State.Listening) {
+                        // Endpoint on silence with nothing recognized: drop the
+                        // buffered dead air up to here — but not the audio the
+                        // reader has captured since, which belongs to whatever
+                        // the user is saying now.
+                        pipe.discardUtteranceThrough(pipe.decodedPosition)
+                    }
+                }
+            }
         }
     }
 
@@ -372,11 +446,15 @@ class VoiceSessionController(
      * join is a native use-after-free, not a dropped chunk.
      */
     private fun stopAudio() {
-        silenceJob?.cancel()
-        silenceJob = null
+        monitorJob?.cancel()
+        monitorJob = null
         val reader = audioJob
         audioJob = null
         audioStopRequested = true
+        // Well inside the 500ms budget for giving focus back (VB-123): this runs
+        // on every path out of the listening state, before the microphone
+        // teardown that has to be joined off the main thread.
+        focus.abandon()
         capture.requestStop()
         reader?.cancel()
         val previous = audioTeardownJob
@@ -394,30 +472,25 @@ class VoiceSessionController(
 
     // ---------------------------------------------------- utterance buffer
 
-    private fun appendUtteranceAudio(chunk: FloatArray) {
-        synchronized(utteranceLock) {
-            utteranceAudio.add(chunk)
-            utteranceSamples += chunk.size
+    /**
+     * The audio the final pass should re-transcribe for the utterance ending now.
+     *
+     * Two cases, and the difference matters:
+     *  - the microphone is still live, so this is an endpoint in a continuing
+     *    session: take only up to the decoder's position, because anything the
+     *    reader captured after that belongs to the next utterance;
+     *  - the microphone has been cut (user stop, editor gone, or an interruption
+     *    under VB-123): nothing more is coming, so take everything buffered —
+     *    including audio the decoder never caught up with. Leaving it behind is
+     *    exactly the "my last sentence vanished" bug.
+     */
+    private fun takeUtteranceAudio(): FloatArray {
+        val pipe = pipeline ?: return FloatArray(0)
+        return if (audioStopRequested) {
+            pipe.takeAllUtterance()
+        } else {
+            pipe.takeUtteranceThrough(pipe.decodedPosition)
         }
-    }
-
-    private fun clearUtteranceAudio() {
-        synchronized(utteranceLock) {
-            utteranceAudio.clear()
-            utteranceSamples = 0
-        }
-    }
-
-    private fun snapshotUtteranceAudio(): FloatArray = synchronized(utteranceLock) {
-        val out = FloatArray(utteranceSamples)
-        var offset = 0
-        for (chunk in utteranceAudio) {
-            chunk.copyInto(out, offset)
-            offset += chunk.size
-        }
-        utteranceAudio.clear()
-        utteranceSamples = 0
-        out
     }
 
     // ------------------------------------------------------------ finalizing
@@ -432,26 +505,34 @@ class VoiceSessionController(
             Log.w(TAG, "finalize already in flight for utterance $utteranceIndex")
             return
         }
-        val samples = snapshotUtteranceAudio()
+        val samples = takeUtteranceAudio()
         host.showFinalizing()
 
         finalizeJob = scope.launch {
-            VoiceEngines.beginUse()
-            val decoded = try {
-                withTimeoutOrNull(FINALIZE_WATCHDOG_MS) {
-                    withContext(decodeDispatcher) {
-                        runCatching { VoiceEngines.finalPass?.transcribe(samples) }
-                            .onFailure { Log.e(TAG, "final ASR pass failed", it) }
-                            .getOrNull()
+            val decoded = if (samples.isEmpty()) {
+                null
+            } else {
+                VoiceEngines.beginUse()
+                try {
+                    withTimeoutOrNull(FINALIZE_WATCHDOG_MS) {
+                        withContext(decodeDispatcher) {
+                            // Null when the optional accuracy pack is not
+                            // installed: dictation degrades to the streaming
+                            // transcript rather than failing.
+                            runCatching { VoiceEngines.finalPass?.transcribe(samples) }
+                                .onFailure { Log.e(TAG, "final ASR pass failed", it) }
+                                .getOrNull()
+                        }
                     }
+                } finally {
+                    VoiceEngines.endUse()
                 }
-            } finally {
-                VoiceEngines.endUse()
             }
             // A blank final result is not a valid transcription of speech the user
             // watched the partial spell out: falling through with "" deleted the
-            // sentence silently. Blank counts as failure, same as a timeout.
-            val finalText = if (decoded.isNullOrBlank()) partial else decoded
+            // sentence silently. Blank counts as failure, same as a timeout, same
+            // as no final-pass model at all.
+            val finalText = FinalTranscriptPolicy.choose(decoded, partial)
 
             val cleaned = cleanTranscript(finalText)
             when (cleaned.command) {
@@ -476,15 +557,51 @@ class VoiceSessionController(
         if (machine.state is DictationStateMachine.State.Listening) host.showListening()
     }
 
-    private fun cleanTranscript(raw: String) = app.cleaner.clean(
-        CleanupRequest(
+    /**
+     * Rules cleanup for one utterance, entirely off the main thread.
+     *
+     * Both halves used to run on the main dispatcher, at the exact frame the
+     * commit animation had to draw: the tokenizer pipeline itself, and — worse —
+     * [Host.precedingText], which is a synchronous binder round-trip into the
+     * target app's process. A slow or busy host (a WebView, a Flutter view, a
+     * hung bridge) therefore froze the keyboard. Now the binder read happens on
+     * an IO thread under a hard budget, and the cleanup runs on Default.
+     */
+    private suspend fun cleanTranscript(raw: String): CleanupResult {
+        val preceding = precedingTextBounded()
+        val request = CleanupRequest(
             transcript = raw,
-            precedingText = host.precedingText(),
+            precedingText = preceding,
             fieldKind = fieldKind,
             options = settings.cleanupOptions(),
             ensureTerminalPunctuation = settings.autoPunctuate && fieldKind == FieldKind.TEXT,
-        ),
-    )
+        )
+        return withContext(Dispatchers.Default) { app.cleaner.clean(request) }
+    }
+
+    /**
+     * The text before the cursor, or "" if the host does not answer in time.
+     *
+     * Honest limitation, the same one [FINALIZE_WATCHDOG_MS] has: a binder call
+     * has no suspension point, so the timeout cannot abandon the call itself —
+     * it abandons *waiting* for it, on a pooled IO thread, leaving dictation
+     * free to continue. Preceding text only feeds capitalization and spacing
+     * decisions, so cleaning without it is a slightly worse join, not a wrong
+     * transcript; a wedged host stalling every commit is far worse.
+     */
+    private suspend fun precedingTextBounded(): String {
+        val text = withTimeoutOrNull(PRECEDING_TEXT_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) {
+                runCatching { host.precedingText() }
+                    .onFailure { Log.w(TAG, "preceding-text read failed", it) }
+                    .getOrDefault("")
+            }
+        }
+        if (text == null) {
+            Log.w(TAG, "host did not return preceding text in ${PRECEDING_TEXT_TIMEOUT_MS}ms")
+        }
+        return text ?: ""
+    }
 
     // ------------------------------------------------------------ refinement
 

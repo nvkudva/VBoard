@@ -119,7 +119,7 @@ object ModelCatalog {
             // Zipformer alone (the final pass is a re-scoring step the pipeline already
             // degrades past — PRODUCT_SPEC VB-124's Zipformer-only mode), so requiring this
             // pack turned a 128 MB first run into a 610 MB one with no way past it.
-            required = false,
+            required = true,
         ),
         ModelPack(
             // Qwen is used as the default refiner because litert-community hosts

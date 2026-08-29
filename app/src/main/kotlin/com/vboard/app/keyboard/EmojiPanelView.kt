@@ -157,7 +157,60 @@ class EmojiPanelView(
         private val columns = 8
         private val cell get() = dp(46f)
 
+        init {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+
         private fun emojis() = EmojiData.categories[categoryIndex].emojis
+
+        /** The whole node tree is replaced when the category changes. */
+        fun onCategoryChanged() {
+            a11y.reset()
+            a11y.notifyContentChanged()
+            requestLayout()
+            invalidate()
+        }
+
+        private fun cellBounds(index: Int): RectF? {
+            if (width == 0 || index !in emojis().indices) return null
+            val w = width.toFloat() / columns
+            val left = (index % columns) * w
+            val top = (index / columns) * cell
+            return RectF(left, top, left + w, top + cell)
+        }
+
+        /**
+         * DESIGN_SPEC §10: emoji cells expose Unicode names. The glyph itself is
+         * useless to a screen reader — see [KeyboardA11y.emojiName].
+         */
+        private val a11y = object : VirtualCells(this) {
+            override fun count(): Int = emojis().size
+
+            override fun boundsOf(id: Int): RectF? = cellBounds(id)
+
+            override fun descriptionOf(id: Int): CharSequence? =
+                emojis().getOrNull(id)?.let { KeyboardA11y.emojiName(it) }
+
+            override fun click(id: Int): Boolean {
+                val emoji = emojis().getOrNull(id) ?: return false
+                listener?.onEmoji(emoji)
+                return true
+            }
+
+            override fun onHoverChanged(id: Int) {
+                if (id != NO_CELL) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+
+            /** Lift-to-type, the same contract the key grid offers. */
+            override fun onHoverLift(id: Int) {
+                emojis().getOrNull(id)?.let { listener?.onEmoji(it) }
+            }
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+        override fun onHoverEvent(event: MotionEvent): Boolean =
+            if (a11y.onHover(event)) true else super.onHoverEvent(event)
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val rows = (emojis().size + columns - 1) / columns
@@ -202,6 +255,10 @@ class EmojiPanelView(
             textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 15f, resources.displayMetrics)
         }
 
+        init {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+
         override fun onDraw(canvas: Canvas) {
             canvas.drawColor(theme.suggestionBg)
             paint.color = theme.keyText
@@ -216,6 +273,37 @@ class EmojiPanelView(
             }
             return true
         }
+
+        private val a11y = object : VirtualCells(this) {
+            override fun count(): Int = 2
+
+            override fun boundsOf(id: Int): RectF? {
+                if (width == 0) return null
+                val half = width / 2f
+                return when (id) {
+                    0 -> RectF(0f, 0f, half, height.toFloat())
+                    1 -> RectF(half, 0f, width.toFloat(), height.toFloat())
+                    else -> null
+                }
+            }
+
+            override fun descriptionOf(id: Int): CharSequence? = when (id) {
+                0 -> context.getString(R.string.a11y_letters)
+                1 -> context.getString(R.string.a11y_backspace)
+                else -> null
+            }
+
+            override fun click(id: Int): Boolean = when (id) {
+                0 -> { listener?.onBackToLetters(); true }
+                1 -> { listener?.onBackspace(); true }
+                else -> false
+            }
+        }
+
+        override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = a11y.provider
+
+        override fun onHoverEvent(event: MotionEvent): Boolean =
+            if (a11y.onHover(event)) true else super.onHoverEvent(event)
     }
 }
 

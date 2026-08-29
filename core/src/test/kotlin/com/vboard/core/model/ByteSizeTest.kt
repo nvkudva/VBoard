@@ -34,13 +34,14 @@ class ByteSizeTest {
     // -------------------------------------------------- catalog-derived copy
 
     @Test
-    fun `shipped catalog splits into a small required download and large optional extras`() {
+    fun `shipped catalog splits into the two speech packs and an optional refiner`() {
         val sizes = DownloadSizes.of()
-        assertEquals(127_887_156L, sizes.requiredBytes)
-        assertEquals(482_468_385L + 547_000_000L, sizes.optionalBytes)
+        // Both speech models are required: streaming alone is not the typing experience.
+        assertEquals(127_887_156L + 482_468_385L, sizes.requiredBytes)
+        assertEquals(547_000_000L, sizes.optionalBytes)
         assertEquals(1_157_355_541L, sizes.totalBytes)
 
-        assertEquals("128 MB", sizes.requiredText)
+        assertEquals("610 MB", sizes.requiredText)
         assertEquals("1.2 GB", sizes.totalText)
     }
 
@@ -55,10 +56,11 @@ class ByteSizeTest {
         }
         val sizes = DownloadSizes.of(packs)
 
-        assertEquals(2_000_000_000L, sizes.requiredBytes)
-        assertEquals("2.0 GB", sizes.requiredText)
+        // Two required packs, each rewritten to 2 GB.
+        assertEquals(4_000_000_000L, sizes.requiredBytes)
+        assertEquals("4.0 GB", sizes.requiredText)
         // and the total moves with it rather than staying on a hardcoded number
-        assertEquals("3.0 GB", sizes.totalText)
+        assertEquals("4.5 GB", sizes.totalText)
     }
 
     @Test
