@@ -18,7 +18,11 @@ captures/
 .kotlin/
 
 # Agent worktrees (transient)
-.claude/
+.claude/*
+# The VBoard build-cycle agents are project knowledge, not personal settings:
+# they encode package file ownership, the QA pin rules and the never-log-user-
+# content constraint. Everything else under .claude/ stays local.
+!.claude/agents/
 
 # Signing keys must never be committed (see docs/RELEASING.md).
 *.jks
