@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VBoard</string>
+    <string name="ime_name">VBoard</string>
+    <string name="subtype_en_us">English (US)</string>
+    <string name="settings_title">VBoard Settings</string>
+
+    <!-- Voice bar -->
+    <string name="voice_listening">Listening…</string>
+    <string name="voice_tap_to_speak">Tap the mic and start speaking</string>
+    <string name="voice_cleaning">Cleaning ✨</string>
+    <string name="voice_error_no_permission">Microphone access is needed for voice typing</string>
+    <string name="voice_error_no_permission_action">Allow</string>
+    <string name="voice_error_no_model">Voice models aren\'t downloaded yet</string>
+    <string name="voice_error_no_model_action">Download</string>
+    <string name="voice_error_model_corrupt">Voice models are damaged — download them again</string>
+    <string name="voice_error_mic_busy">Microphone is in use by another app</string>
+    <string name="voice_error_generic">Something went wrong with voice typing</string>
+    <string name="voice_back_to_keyboard">Back to keyboard</string>
+
+    <!-- Accessibility -->
+    <string name="a11y_mic_key">Voice typing</string>
+    <string name="a11y_backspace">Backspace</string>
+    <string name="a11y_enter">Enter</string>
+    <string name="a11y_shift">Shift</string>
+    <string name="a11y_symbols">Symbols</string>
+    <string name="a11y_letters">Letters</string>
+    <string name="a11y_emoji">Emoji</string>
+    <string name="a11y_space">Space</string>
+    <string name="a11y_voice_orb_listening">Listening. Double-tap to stop.</string>
+
+    <!-- Model download notifications -->
+    <string name="download_channel_name">Model downloads</string>
+    <string name="download_notification_title">Downloading voice models</string>
+    <string name="download_complete">Voice models ready</string>
+    <string name="download_failed">Model download failed</string>
+
+    <!-- Toolbar: AI fix -->
+    <string name="toolbar_ai_fix">Fix</string>
+    <string name="toolbar_ai_fix_working">Fixing…</string>
+    <string name="toolbar_ai_fix_undo">Undo</string>
+    <string name="ai_fix_done_mechanical">Fixed spelling and spacing — tap Undo to put it back</string>
+    <plurals name="ai_fix_done_editorial">
+        <item quantity="one">Fixed, including 1 wording change — tap Undo</item>
+        <item quantity="other">Fixed, including %d wording changes — tap Undo</item>
+    </plurals>
+    <string name="ai_fix_rules_only_missing">Fixed spelling and spacing — smart cleanup isn\'t downloaded</string>
+    <string name="ai_fix_rules_only_failed">Fixed spelling and spacing — smart cleanup couldn\'t run</string>
+    <string name="ai_fix_rules_only_slow">Fixed spelling and spacing — smart cleanup took too long</string>
+    <string name="ai_fix_rules_only_long">Fixed spelling and spacing — too long for smart cleanup</string>
+    <string name="ai_fix_nothing_to_fix">Nothing to fix</string>
+    <string name="ai_fix_nothing_to_fix_missing">Nothing to fix — smart cleanup isn\'t downloaded</string>
+    <string name="ai_fix_off_password">Fix is off in password fields</string>
+    <string name="ai_fix_off_address">Fix is off in email and web address fields</string>
+    <string name="ai_fix_off_number">Fix is off in number fields</string>
+    <string name="ai_fix_too_long">This is too long to fix in one go</string>
+    <string name="ai_fix_field_changed">Text changed while fixing — nothing was replaced</string>
+    <string name="ai_fix_undo_stale">You\'ve edited since — the original is gone</string>
+    <string name="ai_fix_undone">Your original text is back</string>
+    <string name="ai_fix_unavailable">Can\'t read this field right now</string>
+
+    <!-- Accessibility: AI fix -->
+    <string name="a11y_ai_fix">AI fix. Corrects everything in this field. Double-tap to fix.</string>
+    <string name="a11y_ai_fix_working">Fixing your text. Please wait.</string>
+    <string name="a11y_ai_fix_undo">Undo AI fix. Restores your original text. Double-tap to undo.</string>
+    <string name="a11y_ai_fix_off_password">AI fix, unavailable. Turned off in password fields.</string>
+    <string name="a11y_ai_fix_off_address">AI fix, unavailable. Turned off in email and web address fields.</string>
+    <string name="a11y_ai_fix_off_number">AI fix, unavailable. Turned off in number fields.</string>
+</resources>

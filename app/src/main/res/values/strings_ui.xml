@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Onboarding -->
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_continue">Continue</string>
+    <string name="onboarding_finish">Finish</string>
+    <string name="onboarding_not_now">Not now</string>
+    <string name="onboarding_open_keyboard_settings">Open keyboard settings</string>
+    <string name="onboarding_choose_vboard">Choose VBoard</string>
+    <string name="onboarding_allow_mic">Allow microphone</string>
+    <string name="onboarding_open_app_settings">Open app settings</string>
+    <string name="onboarding_open_settings">Open VBoard settings</string>
+    <string name="onboarding_close">Close</string>
+
+    <!-- Model packs (shared by onboarding + settings) -->
+    <string name="pack_download">Download</string>
+    <string name="pack_retry">Retry</string>
+    <string name="pack_delete">Delete</string>
+    <string name="pack_cancel">Cancel download</string>
+    <string name="pack_installed">Installed</string>
+    <string name="pack_verifying">Verifying…</string>
+    <string name="pack_not_installed">Not downloaded</string>
+    <string name="pack_failed">Failed</string>
+    <string name="pack_downloading_percent">Downloading %1$d%%</string>
+
+    <!-- Settings -->
+    <string name="settings_back">Back</string>
+    <string name="settings_group_typing">Typing</string>
+    <string name="settings_group_voice">Voice typing</string>
+    <string name="settings_group_models">Models</string>
+    <string name="settings_group_about">About &amp; privacy</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_key_preview">Key preview popups</string>
+    <string name="settings_auto_cap">Auto-capitalize</string>
+    <string name="settings_double_space">Double-space period</string>
+    <string name="settings_suggestions">Show suggestions</string>
+    <string name="settings_autocorrect">Autocorrect</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_number_row">Number row</string>
+    <string name="settings_number_row_subtitle">Add a row of digits above the letters.</string>
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_delete">Delete</string>
+
+    <!-- Clipboard -->
+    <string name="settings_group_clipboard">Clipboard</string>
+    <string name="settings_clipboard_history">Save clipboard history</string>
+    <string name="settings_clipboard_history_subtitle">Copied text is kept on this device for one hour, or until you delete it. Pinned items are kept until you unpin them. Passwords and one-time codes are never saved.</string>
+    <string name="settings_clipboard_suggestions">Show clipboard suggestions</string>
+    <string name="settings_clipboard_suggestions_subtitle">Offer a just-copied item above the keyboard for a minute. Text only.</string>
+    <string name="settings_clipboard_delete_all">Delete all clipboard history</string>
+    <string name="settings_clipboard_delete_all_subtitle">Removes everything, pinned items included. This cannot be undone.</string>
+    <string name="settings_clipboard_delete_all_confirm">Delete all clipboard history?</string>
+    <string name="settings_clipboard_delete_all_body">Every saved item, pinned ones included, is deleted from this device. This cannot be undone.</string>
+    <string name="clipboard_pinned">Pinned</string>
+    <string name="clipboard_recent">Recent</string>
+    <string name="clipboard_empty_line1">Copied text shows up here.</string>
+    <string name="clipboard_empty_line2">Nothing is saved for more than an hour.</string>
+    <string name="clipboard_pin">Pin</string>
+    <string name="clipboard_unpin">Unpin</string>
+    <string name="clipboard_delete">Delete</string>
+    <string name="clipboard_delete_all">Delete all</string>
+    <string name="clipboard_pin_limit">Unpin something first — 20 pinned items is the limit.</string>
+</resources>
