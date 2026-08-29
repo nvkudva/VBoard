@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.LinearInterpolator
 import com.vboard.app.R
+import com.vboard.app.keyboard.KeyboardMetrics
 import com.vboard.app.keyboard.KeyboardTheme
 import com.vboard.app.keyboard.withAlphaFraction
 import kotlin.math.min
@@ -176,12 +177,19 @@ class VoiceBarView(
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(theme.bgKeyboard)
-        val controlRowH = dp(56f)
-        val transcriptBottom = height - controlRowH
+        val transcriptBottom = controlRowTop()
 
         drawTranscript(canvas, transcriptBottom)
-        drawControls(canvas, transcriptBottom, controlRowH)
+        drawControls(canvas, transcriptBottom, dp(CONTROL_ROW_DP))
     }
+
+    /**
+     * Top of the 56dp control row. The row is held off the bottom edge by
+     * [KeyboardMetrics.VOICE_BAR_BOTTOM_INSET_DP] so the orb's amplitude halo
+     * has somewhere to grow into instead of being cut off by the view.
+     */
+    private fun controlRowTop(): Float =
+        height - dp(CONTROL_ROW_DP) - dp(KeyboardMetrics.VOICE_BAR_BOTTOM_INSET_DP)
 
     private fun drawTranscript(canvas: Canvas, bottom: Float) {
         val padding = dp(16f)
@@ -325,9 +333,9 @@ class VoiceBarView(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked != MotionEvent.ACTION_UP) return true
-        val controlTop = height - dp(56f)
+        val controlTop = controlRowTop()
         val cx = width / 2f
-        val cy = controlTop + dp(28f)
+        val cy = controlTop + dp(CONTROL_ROW_DP / 2f)
         val dx = event.x - cx
         val dy = event.y - cy
         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -341,5 +349,10 @@ class VoiceBarView(
                 listener?.onBackToKeyboard()
         }
         return true
+    }
+
+    private companion object {
+        /** DESIGN_SPEC §4.1 control row: keyboard-return, orb, overflow. */
+        const val CONTROL_ROW_DP = 56f
     }
 }

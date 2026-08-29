@@ -171,6 +171,19 @@ class KeyboardViewA11yTest {
     }
 
     @Test
+    fun `the mic key announces that it is listening during inline dictation`() {
+        val view = keyboard()
+        val mic = view.keyIndexOfActionForTest(KeyAction.Mic)
+        assertEquals("Voice typing", description(view, mic))
+
+        view.micActive = true
+        assertEquals("Voice typing, listening. Double-tap to stop.", description(view, mic))
+
+        view.micActive = false
+        assertEquals("Voice typing", description(view, mic))
+    }
+
+    @Test
     fun `the second symbol page is named distinctly from the first`() {
         val view = keyboard(KeyboardLayouts.SYMBOLS)
         assertEquals(

@@ -22,6 +22,9 @@
     <string name="a11y_enter_previous">Previous</string>
     <string name="a11y_enter_done">Done</string>
 
+    <!-- The mic key while inline dictation is listening on the keyboard. -->
+    <string name="a11y_mic_key_listening">Voice typing, listening. Double-tap to stop.</string>
+
     <string name="a11y_symbols_more">More symbols</string>
     <string name="a11y_clipboard">Clipboard</string>
     <string name="a11y_switch_keyboard">Switch keyboard</string>

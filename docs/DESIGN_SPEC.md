@@ -200,6 +200,23 @@ Background `vb.color.bgKeyboard`, top corners 12dp radius, hairline top divider
   - Right: **overflow button** (⋯), 48×48dp, opens sheet: Auto-punctuation toggle,
     Raw transcript toggle, Voice settings. (English-only v1: no language switcher.)
 
+### 4.1a Inline dictation (mic key, keyboard stays up)
+
+Default mode (Settings → Voice → "Dictate on the keyboard"; the voice bar above
+is what the setting turns off). The mic key starts a session **without**
+replacing the keyboard:
+
+- No transcript and no streaming partials — the field the user is already
+  looking at is the preview. Each finished utterance is committed at the cursor.
+- The mic key carries the whole state: the orb's V2 treatment at key scale — a
+  `micPulse` ring at 24 % alpha, breathing on the same 1200ms sine loop and
+  growing up to 10dp past the key with smoothed RMS.
+- Every other key stays live. **The first keystroke stops listening**; whatever
+  was already spoken is finalized into the field rather than dropped. Tapping
+  the mic key again is the explicit stop.
+- Errors have no bar to live in: the message is a toast, and the two actionable
+  ones (mic permission, missing model) open onboarding directly.
+
 ### 4.2 States & transitions
 
 | # | State | Visual | Enter transition |

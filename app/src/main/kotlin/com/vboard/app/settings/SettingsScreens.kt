@@ -264,6 +264,15 @@ fun SettingsScreen(
             }
             item {
                 SwitchRow(
+                    title = "Dictate on the keyboard",
+                    subtitle = "The mic key listens without hiding the keys, so you can " +
+                        "keep typing. Typing stops listening. Off shows the full voice bar.",
+                    checked = snapshot.inlineDictation,
+                    onCheckedChange = { onSetBoolean(SettingsRepository.Keys.INLINE_DICTATION, it) },
+                )
+            }
+            item {
+                SwitchRow(
                     title = "Remove filler words",
                     subtitle = "Drops \"um\", \"uh\", and similar sounds.",
                     checked = snapshot.removeFillers,
