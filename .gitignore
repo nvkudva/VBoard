@@ -19,3 +19,8 @@ captures/
 
 # Agent worktrees (transient)
 .claude/
+
+# Signing keys must never be committed (see docs/RELEASING.md).
+*.jks
+*.keystore
+keystore.properties
