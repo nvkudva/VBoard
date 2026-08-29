@@ -10,7 +10,6 @@
       settle, and so a ruling is a one-line default change.
     -->
     <string name="settings_voice_timeout">Stop listening after silence</string>
-    <string name="settings_voice_timeout_subtitle">How long the microphone stays open when you stop speaking.</string>
     <string name="settings_voice_timeout_off">Off</string>
     <string name="settings_voice_timeout_5s">5 seconds</string>
     <string name="settings_voice_timeout_8s">8 seconds</string>

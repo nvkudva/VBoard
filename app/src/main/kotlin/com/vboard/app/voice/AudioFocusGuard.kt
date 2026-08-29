@@ -49,21 +49,7 @@ class AudioFocusGuard(
     private var reported = false
 
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
-        when (change) {
-            // A call, or another app taking the audio path outright. Both mean
-            // the microphone is about to stop producing our audio.
-            AudioManager.AUDIOFOCUS_LOSS,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            -> report(Reason.FOCUS_LOST)
-            // Ducking is a request to be quieter, and we are not playing
-            // anything. It does not touch the microphone, so it is not an
-            // interruption — treating it as one would end sessions for a
-            // notification chime.
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Unit
-            // VB-123 is explicit that regaining focus does NOT auto-resume; the
-            // user re-taps the mic. Nothing to do here.
-            else -> Unit
-        }
+        if (isLosingMicrophone(change)) report(Reason.FOCUS_LOST)
     }
 
     private val focusRequest: AudioFocusRequest =
@@ -140,7 +126,21 @@ class AudioFocusGuard(
         }
     }
 
-    private companion object {
-        const val TAG = "VBoardFocus"
+    internal companion object {
+        private const val TAG = "VBoardFocus"
+
+        /**
+         * Whether a focus change means the microphone is going away.
+         *
+         * AUDIOFOCUS_LOSS is another app taking the audio path outright;
+         * AUDIOFOCUS_LOSS_TRANSIENT is what an incoming call sends. Ducking is
+         * neither: it asks us to be quieter, we are not playing anything, and it
+         * does not touch capture — ending a dictation session because a
+         * notification chimed would be its own bug. Regaining focus is not
+         * handled at all: VB-123 is explicit that the user re-taps the mic.
+         */
+        fun isLosingMicrophone(change: Int): Boolean =
+            change == AudioManager.AUDIOFOCUS_LOSS ||
+                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
     }
 }

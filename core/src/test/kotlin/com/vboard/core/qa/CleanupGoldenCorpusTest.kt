@@ -92,9 +92,29 @@ class CleanupGoldenCorpusTest {
         assertEquals("Book the flight for june.", clean("book the flight for may actually no june").text)
     }
 
+    @Test
+    @Disabled("VB-QA-12: '$' is not in Tokenizer.PUNCT_CHARS and is dropped as an unknown symbol")
+    fun `a spoken price keeps its currency symbol`() {
+        // Nobody had checked whether the recognizer ever emits the glyph rather
+        // than the word 'dollars'. If it does — and a price is exactly the kind
+        // of thing a user dictates — the symbol disappears with no trace, which
+        // is a silent corruption of the user's text rather than a formatting
+        // nicety. The golden case below pins today's behaviour; this pins what
+        // it should be.
+        assertEquals("That jacket costs $75.", clean("that jacket costs $75").text)
+    }
+
     companion object {
         val CASES: List<Case> = listOf(
             // ---------------------------------------------------- messaging
+            Case(
+                // VB-QA-12: unrecognized symbols are dropped by the tokenizer,
+                // and '$' is not in its punctuation set. Pinned so a tokenizer
+                // change surfaces here rather than in a user's price.
+                "currency symbol is dropped from a dictated price",
+                "that jacket costs $75",
+                "That jacket costs 75.",
+            ),
             Case(
                 "hesitation fillers removed, sentence capitalized and terminated",
                 "um so I was thinking we should just order pizza tonight",

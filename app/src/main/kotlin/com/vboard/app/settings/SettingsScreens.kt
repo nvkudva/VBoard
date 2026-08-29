@@ -62,6 +62,7 @@ import com.vboard.core.model.ModelKind
 import com.vboard.core.model.ModelPack
 import com.vboard.core.model.PackInstaller
 import com.vboard.core.model.PackState
+import com.vboard.core.session.SilenceTimeout
 import com.vboard.core.suggest.AutocorrectMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -105,12 +106,21 @@ fun SettingsScreen(
     }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showAutocorrectDialog by remember { mutableStateOf(false) }
+    var showSilenceTimeoutDialog by remember { mutableStateOf(false) }
     var showClipboardDeleteDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<ModelPack?>(null) }
 
     val llmPack = ModelCatalog.byKind(ModelKind.REFINER_LLM).firstOrNull()
     val llmInstalled = llmPack != null && packStates[llmPack.id] == PackState.Installed
     val cleanupEnabled = !snapshot.rawTranscriptMode
+    // Resolved here rather than inside RadioDialog: its label lambda is not a
+    // composable scope, so stringResource cannot be called from it.
+    val silenceTimeoutLabels = mapOf(
+        SilenceTimeout.OFF to stringResource(R.string.settings_voice_timeout_off),
+        SilenceTimeout.S5 to stringResource(R.string.settings_voice_timeout_5s),
+        SilenceTimeout.S8 to stringResource(R.string.settings_voice_timeout_8s),
+        SilenceTimeout.S15 to stringResource(R.string.settings_voice_timeout_15s),
+    )
 
     Scaffold(
         topBar = {
@@ -245,6 +255,13 @@ fun SettingsScreen(
 
             // ------------------------------------------------- Voice typing
             item { SectionHeader(stringResource(R.string.settings_group_voice)) }
+            item {
+                ChoiceRow(
+                    title = stringResource(R.string.settings_voice_timeout),
+                    value = silenceTimeoutLabels.getValue(snapshot.silenceTimeout),
+                    onClick = { showSilenceTimeoutDialog = true },
+                )
+            }
             item {
                 SwitchRow(
                     title = "Remove filler words",
@@ -410,6 +427,22 @@ fun SettingsScreen(
             label = { autocorrectLabel(it) },
             onSelect = { onSetString(SettingsRepository.Keys.AUTOCORRECT, it.name) },
             onDismiss = { showAutocorrectDialog = false },
+        )
+    }
+
+    if (showSilenceTimeoutDialog) {
+        RadioDialog(
+            title = stringResource(R.string.settings_voice_timeout),
+            options = listOf(
+                SilenceTimeout.OFF,
+                SilenceTimeout.S5,
+                SilenceTimeout.S8,
+                SilenceTimeout.S15,
+            ),
+            selected = snapshot.silenceTimeout,
+            label = { silenceTimeoutLabels.getValue(it) },
+            onSelect = { onSetString(SettingsRepository.Keys.SILENCE_TIMEOUT, it.name) },
+            onDismiss = { showSilenceTimeoutDialog = false },
         )
     }
 
