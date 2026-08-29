@@ -325,7 +325,7 @@ class ModelStore(context: Context) {
         if (external.exists() && hasPacks(external)) return
         if (!hasPacks(internalRoot)) return
 
-        val needed = internalRoot.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val needed = ModelRoots.sizeOf(internalRoot)
         val volume = external.parentFile ?: external
         if (volume.usableSpace < needed + MIGRATION_HEADROOM_BYTES) {
             Log.w(TAG, "not enough room on the external volume to move the models")
@@ -346,32 +346,12 @@ class ModelStore(context: Context) {
         }
     }
 
-    /**
-     * Copies pack by pack, each through its own staging directory renamed into
-     * place. Pack granularity is what makes an interrupted migration useful: the
-     * packs that made it are already usable, and the rest are picked up next
-     * time, rather than a gigabyte of work being thrown away.
-     */
     private fun copyInternalRootTo(external: File) {
-        val packDirs = internalRoot.listFiles()?.filter { it.isDirectory }.orEmpty()
-        var moved = 0
-        for (packDir in packDirs) {
-            val target = File(external, packDir.name)
-            if (target.exists()) continue
-            val staging = File(external, "$STAGING_PREFIX${android.os.Process.myPid()}-${packDir.name}")
-            deleteQuietly(staging)
-            try {
-                if (!packDir.copyRecursively(staging, overwrite = true)) {
-                    throw IOException("copy did not complete")
-                }
-                syncDir(staging)
-                if (!staging.renameTo(target)) throw IOException("cannot activate the copy")
-                moved++
-            } catch (e: Throwable) {
-                Log.w(TAG, "could not migrate pack ${packDir.name}", e)
-                deleteQuietly(staging)
-            }
-        }
+        val moved = ModelRoots.copyPacks(
+            from = internalRoot,
+            to = external,
+            pid = android.os.Process.myPid(),
+        ) { packName, e -> Log.w(TAG, "could not migrate pack $packName", e) }
         if (moved > 0) {
             syncDir(external)
             Log.i(TAG, "migrated $moved pack(s) out of app data; originals go on the next start")
@@ -393,21 +373,8 @@ class ModelStore(context: Context) {
          */
         const val NOMEDIA = ".nomedia"
 
-        /** Dot-prefixed so [hasPacks] cannot mistake an in-flight copy for a pack. */
-        const val STAGING_PREFIX = ".staging-"
-
-        /**
-         * External when it is usable, but never mid-flight: a process that
-         * already has packs on internal storage keeps reading them from there
-         * until [migrateFromInternalStorage] has copied them across, so the mic
-         * never reports "not installed" for models that are on the device.
-         */
-        fun chooseRoot(context: Context, internalRoot: File): File {
-            val external = externalRoot(context) ?: return internalRoot
-            if (hasPacks(external)) return external
-            if (hasPacks(internalRoot)) return internalRoot
-            return external
-        }
+        fun chooseRoot(context: Context, internalRoot: File): File =
+            ModelRoots.choose(externalRoot(context), internalRoot)
 
         /**
          * `Android/media/<pkg>/models` on the primary volume, or null when there
@@ -423,14 +390,6 @@ class ModelStore(context: Context) {
             return root
         }
 
-        /**
-         * A root "has packs" when a pack directory has been installed under it.
-         * Dot-prefixed entries are excluded on purpose: a migration in flight
-         * leaves staging directories here, and counting one of those would point
-         * the next process at a root whose models have not arrived yet.
-         */
-        fun hasPacks(root: File): Boolean =
-            root.isDirectory &&
-                root.listFiles()?.any { it.isDirectory && !it.name.startsWith(".") } == true
+        fun hasPacks(root: File): Boolean = ModelRoots.hasPacks(root)
     }
 }
