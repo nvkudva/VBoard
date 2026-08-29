@@ -115,11 +115,14 @@ lose the user's words outright and two cross a privacy boundary we stated public
 |---|---|---|---|---|
 | W1.5.1 | **Package A — Unicode-safe text core** ✅ landed | VB-QA-12, -13, -14, -15, -16, -17, -21, **-27** | `core/text/Tokens.kt`, `TranscriptCleaner.kt` (`ARTIFACT_REGEX` + its call site only), `Cleanup.kt` | M |
 | W1.5.2 | **Package B — Destructive-stage confidence + field-kind honesty** | VB-QA-18, -19, -20, -29, gap G3 | `core/text/TranscriptCleaner.kt` (stages 2/3/5, `capitalize`), `FieldKind.kt`, `Cleanup.kt` | M |
-| W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** | VB-QA-22, -23, -24, -25, -26, -28, -32 | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt` | M |
+| W1.5.3 | **Package C — Seams: commit planning, clipboard privacy, suggestion ranking** ✅ landed | VB-QA-22, -23, -24, -25, -26, -28, -32, **-33, -34** | `core/text/CommitPlanner.kt`, `core/clipboard/ClipClassifier.kt`, `core/suggest/SuggestionEngine.kt`, `core/correct/ContentGuard.kt` | M |
 
-**28 `@Disabled` tests were written and waiting; Package A has since enabled 11 of
-them, leaving 17 across B and C** (18 skips total in `:core`, one of which is
-VB-QA-05 and outside this wave). Each names the `VB-QA-NN` it is
+**28 `@Disabled` tests were written and waiting; Package A has since enabled 11
+of them and Package C 10, leaving 7, all in the two suites Package B works in**
+(8 skips total in
+`:core`: the four in `SpokenCommandSafetyQaTest` for VB-QA-18/-19/-20, the three
+in `CleanupInvariantQaTest` for VB-QA-29 and the cosmetic VB-QA-30/-31, plus
+VB-QA-05, which is outside this wave). Each names the `VB-QA-NN` it is
 blocked on; each package's definition of done is "these specific tests pass with the
 annotation removed, and the invariant suites stay green". That last clause is the real
 gate — `CleanupInvariantQaTest` and the clipboard retention fuzz exist to catch a fix that
@@ -129,7 +132,11 @@ Nobody has to re-derive the requirements; the spec is executable.
 Sequencing inside the wave: **A first, then B and C in any order or concurrently.** A is
 not merely largest, it *shrinks the other two* — VB-QA-33 and VB-QA-34 exist only because
 `ContentGuard` is compensating for `Tokenizer`, and gap G2 becomes much smaller once the
-tokenizer stops destroying content. Full file ownership, the constraints each fixer must
+tokenizer stops destroying content. Half of that held: after A, the shield no longer
+changes the outcome for the inputs `TypedTextSafetyQaTest` compares — but VB-QA-33 and
+-34 are defects in `ContentGuard.needsShield` itself, both still failed with their
+`@Disabled` annotation removed, and C had to fix them there, which is why
+`ContentGuard.kt` appears in its `Owns` cell above. Full file ownership, the constraints each fixer must
 not violate, and per-package definitions of done are in [QA_REPORT.md §9](QA_REPORT.md).
 
 **The ordering question that was open here is now closed: bugs first, features
@@ -144,12 +151,14 @@ and the feature gets smaller rather than reworked.
 Running the two concurrently remains the one option that does not work: one file,
 two owners, and this project has already lost an agent's work to exactly that.
 
-**Two of these are not schedulable as ordinary polish.** VB-QA-24 writes a one-time code
-or card number to disk when it arrives in non-ASCII digits — `SESSION_ONLY` is the privacy
-boundary and this crosses it. VB-QA-29 capitalizes inside `PASSWORD` fields, which the
-spec says must be left untouched entirely. Both are in Wave 1.5 because that is where
-their packages live, but if beta ships before this wave lands, they are the two that
-should be lifted out and fixed first.
+**Two of these were not schedulable as ordinary polish.** VB-QA-24 wrote a one-time code
+or card number to disk when it arrived in non-ASCII digits — `SESSION_ONLY` is the privacy
+boundary and this crossed it. **Package C has closed it**, together with VB-QA-26 in the
+same change as the constraint required, and closed an unnumbered zero-width-character
+variant of the same crossing found in the same audit ([QA_REPORT.md §9](QA_REPORT.md)).
+VB-QA-29 capitalizes inside `PASSWORD` fields, which the spec says must be left untouched
+entirely; it is now the only one of the two still open, so if beta ships before Package B
+lands, it is the one to lift out and fix first.
 
 ### Wave 1 — Confidence foundation
 

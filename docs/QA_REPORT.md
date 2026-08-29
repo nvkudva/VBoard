@@ -11,7 +11,7 @@ Status: **findings captured. No fix work is dispatched** — see
 
 ## 1. Test suite summary
 
-**761 tests · 0 failures · 29 skipped.** Every skip is a `@Disabled`
+**762 tests · 0 failures · 8 skipped.** Every skip is a `@Disabled`
 spec-correct assertion naming the `VB-QA-NN` it is blocked on, not a coverage
 gap.
 
@@ -25,11 +25,11 @@ gap.
 | Tokenizer symbol loss | `qa/TokenizerSymbolLossQaTest` | ✅ pass |
 | Spoken-command safety | `qa/SpokenCommandSafetyQaTest` | ✅ 4 skips |
 | Raw-mode fidelity | `qa/RawModeFidelityQaTest` | ✅ pass |
-| Commit planning & text diff | `CommitPlannerTest`, `TextDiffTest`, `qa/CommitSeamQaTest` | ✅ 3 skips |
-| Clipboard privacy | `qa/ClipboardPrivacyQaTest` | ✅ 3 skips |
-| Typed-text safety | `qa/TypedTextSafetyQaTest` | ✅ 2 skips |
+| Commit planning & text diff | `CommitPlannerTest`, `TextDiffTest`, `qa/CommitSeamQaTest` | ✅ pass |
+| Clipboard privacy | `qa/ClipboardPrivacyQaTest` | ✅ pass |
+| Typed-text safety | `qa/TypedTextSafetyQaTest` | ✅ pass |
 | Dictation state machine | `DictationStateMachineTest`, `qa/StateMachineFuzzTest` | ✅ pass |
-| Suggestions/autocorrect | `SuggestionEngineTest`, `LexiconTest`, `UserHistoryTest`, `qa/SuggestionEngineQaTest`, `qa/SuggestionFieldMatrixQaTest` | ✅ 3 skips |
+| Suggestions/autocorrect | `SuggestionEngineTest`, `LexiconTest`, `UserHistoryTest`, `qa/SuggestionEngineQaTest`, `qa/SuggestionFieldMatrixQaTest` | ✅ pass |
 | Model catalog & installer | `ModelCatalogTest`, `PackInstallerTest`, `qa/ModelInstallerQaTest` | ✅ pass |
 | Report-id regression pins | `qa/QaRegressionPinTest` (one test per VB-QA-01…12) | ✅ pass |
 
@@ -61,10 +61,11 @@ Ids continue the series. Every finding is pinned by a **passing** test asserting
 test asserting what it *should* do.
 
 **Status.** Wave 1.5 Package A has since landed, closing VB-QA-12, -13, -14,
--15, -16, -17, -21 and -27; those rows are marked ✅ **Fixed** below and their
-tests are enabled. Everything else in this section is still open. The findings
-are left describing the defect as it was found, because that is what the
-enabled tests now assert the inverse of.
+-15, -16, -17, -21 and -27; Package C has since landed, closing VB-QA-22, -23,
+-24, -25, -26, -28, -32, -33 and -34 — the whole of §3.3. Those rows are marked
+✅ **Fixed** below and their tests are enabled. Everything else in this section
+is still open. The findings are left describing the defect as it was found,
+because that is what the enabled tests now assert the inverse of.
 
 ### 3.1 One defect, five symptoms
 
@@ -111,17 +112,19 @@ small closed set of ASR artifacts.
 
 ### 3.3 Seams: classification by ASCII assumption
 
+✅ **Fixed by Package C** — all nine. Described below as they were found.
+
 | ID | Severity | Finding | Evidence |
 |---|---|---|---|
-| VB-QA-24 | **High** (privacy) | `ClipClassifier`'s `OTP_PATTERN` and `DIGIT_RUN_PATTERN` use Java `\d` (ASCII-only) while `luhnValid` and `isNumberLike` use `Char.isDigit()` (Unicode-aware). The disagreement falls on the unsafe side: a one-time code or card number in non-ASCII digits is classified `NORMAL` and **written to the clipboard history file** instead of held `SESSION_ONLY`. | `١٢٣٤٥٦` (Arabic-Indic OTP) → persisted to disk |
-| VB-QA-32 | **High** | Accented Latin words are autocorrected into unrelated English words **in the shipping default mode**. `isCorrectableToken` accepts any `Char.isLetter()`; an out-of-lexicon literal scores only `LITERAL_PRIOR` while the lexicon word scores full log-frequency, clearing `CONSERVATIVE_MARGIN`. | CONSERVATIVE: `crème` → **`crime`**, `élan` → **`plan`**; strip: `Müller` → `[Miller, Müller, Killer]` |
-| VB-QA-33 | Medium | `ContentGuard.needsShield` treats a combining mark as unsafe content, so NFD `café` is shielded and escapes sentence casing while its NFC twin is capitalized. Typed cleanup is normalization-dependent. | NFC → `Café is open.`; NFD → `café is open.` |
-| VB-QA-34 | Medium | `needsShield` accepts a leading `-` as an ordinary word character, so CLI flags, markdown bullets and dashed asides pass unshielded into the tokenizer. `-5` *is* shielded (the digit trips the check), so the hole is specific to hyphen-then-letters. | `run git commit -m "fix" first` → `Run git commit - m "fix" first.` |
-| VB-QA-22 | Medium | `CommitPlanner.OPENERS`/`CLOSERS` are ASCII-only and incomplete — possessives detach, hyphenated compounds break, currency and closing curly quotes get a leading space. | `"hello" + "'s"` → `" 's"` |
-| VB-QA-28 | Medium | `TextDiff.replacement` correctly refuses to split a surrogate pair (verified over 4,000 randomized pairs) but the prefix can still land inside a grapheme cluster. Output text is correct; the intermediate composing region flickers through a broken glyph — exactly what the minimal diff exists to prevent. | `🇺🇸`→`🇺🇦` keeps 2 chars |
-| VB-QA-23 | Low | `doubleSpacePeriodApplies` inspects `precedingText[length-2]`, which after an emoji is a low surrogate and after NFD `café ` is a combining mark. Double-space-period silently stops working. | works after NFC `café `, not after NFD |
-| VB-QA-25 | Low | `ClipClassifier` trims with `String.trim()`, which removes whitespace but not format characters, so a clip of `U+200B` is stored and renders as an empty chip. | |
-| VB-QA-26 | Low | `luhnValid` guards with `Char.isDigit()` (Unicode-aware) then evaluates with `digits[i] - '0'` (ASCII). Unreachable today, but **becomes reachable the moment VB-QA-24 is fixed** — the two must be fixed together. | `luhnValid("١٢٣٤")` → `true` |
+| VB-QA-24 | **High** (privacy) · ✅ Fixed | `ClipClassifier`'s `OTP_PATTERN` and `DIGIT_RUN_PATTERN` use Java `\d` (ASCII-only) while `luhnValid` and `isNumberLike` use `Char.isDigit()` (Unicode-aware). The disagreement falls on the unsafe side: a one-time code or card number in non-ASCII digits is classified `NORMAL` and **written to the clipboard history file** instead of held `SESSION_ONLY`. | `١٢٣٤٥٦` (Arabic-Indic OTP) → persisted to disk |
+| VB-QA-32 | **High** · ✅ Fixed | Accented Latin words are autocorrected into unrelated English words **in the shipping default mode**. `isCorrectableToken` accepts any `Char.isLetter()`; an out-of-lexicon literal scores only `LITERAL_PRIOR` while the lexicon word scores full log-frequency, clearing `CONSERVATIVE_MARGIN`. | CONSERVATIVE: `crème` → **`crime`**, `élan` → **`plan`**; strip: `Müller` → `[Miller, Müller, Killer]` |
+| VB-QA-33 | Medium · ✅ Fixed | `ContentGuard.needsShield` treats a combining mark as unsafe content, so NFD `café` is shielded and escapes sentence casing while its NFC twin is capitalized. Typed cleanup is normalization-dependent. | NFC → `Café is open.`; NFD → `café is open.` |
+| VB-QA-34 | Medium · ✅ Fixed | `needsShield` accepts a leading `-` as an ordinary word character, so CLI flags, markdown bullets and dashed asides pass unshielded into the tokenizer. `-5` *is* shielded (the digit trips the check), so the hole is specific to hyphen-then-letters. | `run git commit -m "fix" first` → `Run git commit - m "fix" first.` |
+| VB-QA-22 | Medium · ✅ Fixed | `CommitPlanner.OPENERS`/`CLOSERS` are ASCII-only and incomplete — possessives detach, hyphenated compounds break, currency and closing curly quotes get a leading space. | `"hello" + "'s"` → `" 's"` |
+| VB-QA-28 | Medium · ✅ Fixed | `TextDiff.replacement` correctly refuses to split a surrogate pair (verified over 4,000 randomized pairs) but the prefix can still land inside a grapheme cluster. Output text is correct; the intermediate composing region flickers through a broken glyph — exactly what the minimal diff exists to prevent. | `🇺🇸`→`🇺🇦` keeps 2 chars |
+| VB-QA-23 | Low · ✅ Fixed | `doubleSpacePeriodApplies` inspects `precedingText[length-2]`, which after an emoji is a low surrogate and after NFD `café ` is a combining mark. Double-space-period silently stops working. | works after NFC `café `, not after NFD |
+| VB-QA-25 | Low · ✅ Fixed | `ClipClassifier` trims with `String.trim()`, which removes whitespace but not format characters, so a clip of `U+200B` is stored and renders as an empty chip. | |
+| VB-QA-26 | Low · ✅ Fixed | `luhnValid` guards with `Char.isDigit()` (Unicode-aware) then evaluates with `digits[i] - '0'` (ASCII). Unreachable today, but **becomes reachable the moment VB-QA-24 is fixed** — the two must be fixed together. | `luhnValid("١٢٣٤")` → `true` |
 
 ## 4. Gaps
 
@@ -287,11 +290,13 @@ is treated as intra-word, so `a_b@c.com` and `well-known` survive as one word.
 
 **Land this first.** Package B's `sentenceStartsAt` work and Package C's
 `ContentGuard` work both shrink or disappear once it does: VB-QA-33 and -34 exist
-only because `ContentGuard` is compensating for `Tokenizer`. Partly borne out:
-`TypedTextSafetyQaTest`'s guarded/unguarded comparison pairs are now identical,
-so the *shield* no longer changes the outcome for those inputs — but VB-QA-33
-and -34 are defects in `ContentGuard.needsShield` itself and remain open, with
-their two `@Disabled` tests still disabled for Package C.
+only because `ContentGuard` is compensating for `Tokenizer`. Only half of that
+was borne out, and Package C settled it: `TypedTextSafetyQaTest`'s
+guarded/unguarded comparison pairs are indeed now identical, so the *shield* no
+longer changes the outcome for those inputs — but VB-QA-33 and -34 are defects in
+`ContentGuard.needsShield` itself, both `@Disabled` tests still genuinely failed
+with the annotation removed, and both needed real `ContentGuard` changes. Package
+C made them, and `ContentGuard.kt` was therefore Package C's fourth file.
 
 ### Package B — Destructive-stage confidence and field-kind honesty
 
@@ -322,17 +327,20 @@ spoken-command substitutions and the counter-honesty test is rewritten to assert
 the new behaviour; VB-QA-29's `PASSWORD` case is closed — it is the one with a
 privacy story.
 
-### Package C — Seams: commit planning, clipboard privacy, suggestion ranking
+### Package C — Seams: commit planning, clipboard privacy, suggestion ranking ✅ **Landed**
 
-**Why these travel together.** They are the three places a *classification*
-decision is made about a single character or token, and all three are wrong the
+**Why these travel together.** They are the places a *classification*
+decision is made about a single character or token, and all are wrong the
 same way — they classify by ASCII assumption. None touches `TranscriptCleaner.kt`
 or `Tokens.kt`, so the package is fully disjoint from A and B.
 
 **Files:** `core/text/CommitPlanner.kt` (VB-QA-22, -23, -28),
 `core/clipboard/ClipClassifier.kt` (VB-QA-24, -25, -26),
-`core/suggest/SuggestionEngine.kt` (VB-QA-32). **Tests:** `CommitSeamQaTest`,
-`ClipboardPrivacyQaTest`, `SuggestionFieldMatrixQaTest`.
+`core/suggest/SuggestionEngine.kt` (VB-QA-32), `core/correct/ContentGuard.kt`
+(VB-QA-33, -34) — **four production files, not the three earlier drafts of this
+section listed.** VB-QA-33 and -34 are defects in `needsShield` itself, so
+`ContentGuard.kt` came with them. **Tests:** `CommitSeamQaTest`,
+`ClipboardPrivacyQaTest`, `SuggestionFieldMatrixQaTest`, `TypedTextSafetyQaTest`.
 
 **Two hard constraints.** (1) VB-QA-24 and VB-QA-26 **must be fixed in the same
 change** — `luhnValid`'s ASCII arithmetic is unreachable only because
@@ -341,9 +349,60 @@ negative into a false positive. (2) VB-QA-32's fix must not weaken VB-QA-06 or
 VB-QA-09; `QaRegressionPinTest` asserts both and
 `SuggestionFieldMatrixQaTest`'s 18,000-case strip invariants are the backstop.
 
-**Done when:** 9 `@Disabled` tests pass and the 500-step clipboard retention fuzz
-is still green — it is what would catch a fix that classifies too aggressively
-and starts dropping ordinary clips.
+**Done when:** 10 `@Disabled` tests pass (the two VB-QA-33/-34 tests in
+`TypedTextSafetyQaTest` belong to this count) and the 500-step clipboard
+retention fuzz is still green — it is what would catch a fix that classifies too
+aggressively and starts dropping ordinary clips.
+
+**Outcome.** All 10 are enabled and green; the core suite is 762 tests, 0
+failures, 8 skipped (was 761 / 18). The +1 test is one new regression test; the
+remaining 8 skips are all outside this package —
+`SpokenCommandSafetyQaTest` (4), `CleanupInvariantQaTest` (3) and
+`CleanupPropertyTest` (1, VB-QA-05). Nothing overshot:
+`CleanupGoldenCorpusTest` (58 tests) is untouched with no golden case changed,
+`CleanupInvariantQaTest` is 21/0, `QaRegressionPinTest` is 12/0 with its VB-QA-06
+and VB-QA-09 pins intact, and the clipboard retention fuzz,
+`SuggestionFieldMatrixQaTest`'s 18,000-case strip invariants,
+`CommitSeamQaTest`'s 4,000-pair diff reconstruction fuzz and
+`TypedTextSafetyQaTest`'s 4,000-case content-loss fuzz are all green. Eight files
+changed; `QaRegressionPinTest.kt`, `ClipClassifierTest.kt`, `CommitPlannerTest.kt`,
+`ContentPreservationTest.kt` and `ClipboardHistory.kt` were not touched.
+
+Five things a later reader will want to know:
+
+- **Ten regression pins were flipped, not deleted** — 3 in `CommitSeamQaTest`,
+  3 in `ClipboardPrivacyQaTest`, 2 in `SuggestionFieldMatrixQaTest`, 2 in
+  `TypedTextSafetyQaTest`. Each had asserted the *unfixed* behaviour next to its
+  disabled twin; each was inverted to assert the fix and renamed. Same precedent
+  as Package A's VB-QA-12 pin. `QaRegressionPinTest` holds no pin for any Package
+  C id (its ids stop at 12) and was not touched.
+- **One extra defect was found and closed beyond the nine ids, and it carries no
+  VB-QA id.** A privacy audit caught that the fixed OTP rule still trimmed with
+  `String.trim()`, which does not strip Cf format characters, so a one-time code
+  carrying a zero-width space or a BOM (and its Arabic-Indic equivalent) was
+  classified `NORMAL` and persisted to disk — the same `SESSION_ONLY` crossing as
+  VB-QA-24, one layer out. The blank predicate and the OTP predicate now share a
+  single private `isInvisible` helper so they cannot drift apart again, and
+  `ClipboardPrivacyQaTest.a one-time code wearing an invisible character is still
+  session-only` pins it.
+- **`java.text.BreakIterator` was tried and rejected for VB-QA-28.** On the
+  pinned JDK 17 toolchain its character instance implements legacy clusters and
+  splits ZWJ sequences, regional-indicator flag pairs and emoji skin-tone
+  modifiers — the exact inputs the fix exists for. `TextDiff.replacement`'s
+  round-down to a grapheme-cluster boundary is hand-rolled for that reason.
+- **VB-QA-32 was closed without touching `LITERAL_PRIOR` or `Lexicon`.** The
+  natural lever — charging a non-ASCII↔ASCII substitution a blocking edit cost —
+  lives in `Lexicon.fuzzyDescend`, which this package did not own. One predicate
+  in `SuggestionEngine` (the token contains a letter outside `a-z`) skips fuzzy
+  matching and gates autocorrect instead, so ASCII ranking is unmoved and the
+  VB-QA-06/-09 constraint holds by construction.
+- **Two limitations knowingly left open.** `DIGIT_RUN_PATTERN`'s separator class
+  is still ASCII-only (`[ -]?`), so a card number grouped with NBSP, U+2007 or an
+  en-dash still evades the Luhn check and is persisted — deliberately deferred.
+  And `ContentGuard.Shield` is a plain class with a hand-written count-only
+  `toString`, deliberately not a `data class`, so shielded user content cannot
+  reach a log; adding `data` or an IDE-generated `toString` would silently defeat
+  that and no test would catch it.
 
 ### Not in any package
 

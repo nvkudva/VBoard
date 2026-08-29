@@ -137,17 +137,20 @@ class SuggestionEngine(
             candidates[word] = Candidate(word, score, Suggestion.Source.COMPLETION, extra)
         }
 
-        // Fuzzy corrections.
-        val maxCost = if (lower.length <= SHORT_WORD_LENGTH) 1.0 else 2.0
-        lexicon.fuzzyMatch(lower, maxCost) { word, frequency, cost, ops ->
-            val score = ln(1.0 + frequency) - EDIT_PENALTY * cost + historyBoost(word, prev)
-            val existing = candidates[word]
-            if (existing == null) {
-                candidates[word] = Candidate(word, score, Suggestion.Source.CORRECTION, ops)
-            } else if (score > existing.score) {
-                existing.score = score
-                existing.source = Suggestion.Source.CORRECTION
-                existing.ops = ops
+        // Fuzzy corrections. Skipped entirely for text the lexicon cannot spell:
+        // every match it could return is a mis-measurement (VB-QA-32).
+        if (!isOutsideLexiconAlphabet(composing)) {
+            val maxCost = if (lower.length <= SHORT_WORD_LENGTH) 1.0 else 2.0
+            lexicon.fuzzyMatch(lower, maxCost) { word, frequency, cost, ops ->
+                val score = ln(1.0 + frequency) - EDIT_PENALTY * cost + historyBoost(word, prev)
+                val existing = candidates[word]
+                if (existing == null) {
+                    candidates[word] = Candidate(word, score, Suggestion.Source.CORRECTION, ops)
+                } else if (score > existing.score) {
+                    existing.score = score
+                    existing.source = Suggestion.Source.CORRECTION
+                    existing.ops = ops
+                }
             }
         }
 
@@ -224,6 +227,7 @@ class SuggestionEngine(
         // Internal capitals ("iPhone", "VBoard", "McDonald") signal deliberate
         // input and gate autocorrect exactly like ALL-CAPS does (VB-QA-06).
         if (composing.length > 1 && composing.drop(1).any { it.isUpperCase() }) return null
+        if (isOutsideLexiconAlphabet(composing)) return null
 
         // Lone lowercase "i" becomes "I" in free-form text.
         if (composing == "i" && kind == FieldKind.TEXT) {
@@ -253,6 +257,26 @@ class SuggestionEngine(
         val best = ranked.firstOrNull { it.ops <= maxOps } ?: return null
         if (best.score - literalScore < margin) return null
         return Suggestion(presentPronouns(matchCase(composing, best.word)), best.score, best.source)
+    }
+
+    /**
+     * True when [composing] contains a letter the lexicon's alphabet cannot spell.
+     *
+     * The trie holds a-z only, and the weighted edit distance charges "è" -> "i"
+     * as one ordinary substitution — so an out-of-lexicon accented word lands one
+     * edit from a frequent ASCII one and the margin falls over ("crème" -> "crime",
+     * "élan" -> "plan"). No candidate the matcher can return for such a token is
+     * a real spelling of it, so none is offered and the literal stands alone.
+     * Deliberate ASCII casing ("iPhone", "ASAP") is untouched by this test.
+     */
+    private fun isOutsideLexiconAlphabet(composing: String): Boolean {
+        var i = 0
+        while (i < composing.length) {
+            val cp = composing.codePointAt(i)
+            if (Character.isLetter(cp) && Character.toLowerCase(cp) !in ASCII_LOWER) return true
+            i += Character.charCount(cp)
+        }
+        return false
     }
 
     /** Letters with optional internal apostrophes; digits/symbols make a token untouchable. */
@@ -300,6 +324,9 @@ class SuggestionEngine(
 
         /** Base score of out-of-lexicon literal text (the benefit of the doubt). */
         private const val LITERAL_PRIOR = 2.0
+
+        /** The lexicon trie's whole alphabet, in code points. */
+        private val ASCII_LOWER = 'a'.code..'z'.code
 
         private const val CONSERVATIVE_MARGIN = 1.0
         private const val AGGRESSIVE_MARGIN = 0.25
