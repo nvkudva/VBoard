@@ -56,13 +56,13 @@ class ModelStore(context: Context) {
     fun streamingPaths(installer: PackInstaller): SpeechModelPaths? {
         val pack = ModelCatalog.byKind(ModelKind.STREAMING_ASR).firstOrNull() ?: return null
         val dir = extractedDir(installer, pack) ?: return null
-        return findTransducer(dir, int8Preferred = true)
+        return findTransducer(dir)
     }
 
     fun parakeetPaths(installer: PackInstaller): SpeechModelPaths? {
         val pack = ModelCatalog.byKind(ModelKind.FINAL_ASR).firstOrNull() ?: return null
         val dir = extractedDir(installer, pack) ?: return null
-        return findTransducer(dir, int8Preferred = true)
+        return findTransducer(dir)
     }
 
     /**
@@ -116,7 +116,7 @@ class ModelStore(context: Context) {
             // yielded no usable model is a corrupt install and must never be
             // marked complete.
             if (pack.kind != ModelKind.REFINER_LLM &&
-                findTransducer(staging, int8Preferred = true) == null
+                findTransducer(staging) == null
             ) {
                 throw IOException("extracted archive contains no usable transducer")
             }
@@ -151,21 +151,30 @@ class ModelStore(context: Context) {
     }
 
     /** Locates encoder/decoder/joiner/tokens anywhere under [dir] (archives nest a folder). */
-    private fun findTransducer(dir: File, int8Preferred: Boolean): SpeechModelPaths? {
+    private fun findTransducer(dir: File): SpeechModelPaths? {
         val all = dir.walkTopDown().filter { it.isFile }.toList()
-        fun pick(role: String): File? {
+
+        /**
+         * Quantization is chosen per role, not per model. The streaming Zipformer archive
+         * ships both variants of all three graphs, and sherpa-onnx's own configuration for
+         * it pairs an int8 encoder and joiner with a *float* decoder: the decoder is a small
+         * embedding + convolution network, so quantizing it costs accuracy while saving
+         * almost nothing. Preferring int8 everywhere silently ran the model in a
+         * configuration upstream does not recommend.
+         *
+         * Packs that ship only one variant (Parakeet is int8-only) fall through to whatever
+         * is present, so this is a no-op for them.
+         */
+        fun pick(role: String, preferInt8: Boolean): File? {
             val candidates = all.filter {
                 it.name.startsWith(role) && it.name.endsWith(".onnx")
             }
-            return if (int8Preferred) {
-                candidates.firstOrNull { it.name.contains("int8") } ?: candidates.firstOrNull()
-            } else {
-                candidates.firstOrNull { !it.name.contains("int8") } ?: candidates.firstOrNull()
-            }
+            val preferred = candidates.filter { it.name.contains("int8") == preferInt8 }
+            return preferred.firstOrNull() ?: candidates.firstOrNull()
         }
-        val encoder = pick("encoder") ?: return null
-        val decoder = pick("decoder") ?: return null
-        val joiner = pick("joiner") ?: return null
+        val encoder = pick("encoder", preferInt8 = true) ?: return null
+        val decoder = pick("decoder", preferInt8 = false) ?: return null
+        val joiner = pick("joiner", preferInt8 = true) ?: return null
         val tokens = all.firstOrNull { it.name == "tokens.txt" } ?: return null
         return SpeechModelPaths(
             encoder.absolutePath,
