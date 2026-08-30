@@ -29,26 +29,29 @@ by Unicode code point instead of by ASCII assumption — closing VB-QA-22, -23,
 **Wave 1.5 is complete.** A, B and C have all landed; nothing in the wave
 remains.
 
-**Branch `fix/ime-dictation-dataloss-and-enter-action`** (2 commits, `9e2598a`
-and `3dc5b66`, taken off `b5b8fca`) carries five `:app` IME fixes: dictated
-speech is finalized rather than discarded when a host calls `restartInput` or
-the user returns to the keyboard; `IME_FLAG_NO_ENTER_ACTION` now reaches
-`imeActionId`; the Enter key renders all six editor actions (VB-701); and the
-voice gate is re-checked at commit time, not only at `startVoice`. It is **not a
-wave package** — no `V2_PLAN` item was closed by it.
+**Three `:app` IME fixes landed in `4b6ed2a` (PR #9), released as
+`v1.0.0-alpha.4`:** dictated speech is finalized rather than discarded when a
+host calls `restartInput` or the user returns to the keyboard, and the voice
+gate is re-checked on both utterance write paths rather than only at
+`startVoice`. Not a wave package — no `V2_PLAN` item was closed.
 
-What is unverified about it: **the two dictation data-loss fixes have no
+The Enter/IME-action half of the same bug report landed **independently** in
+`0ab3e71` (PR #7), alongside inline dictation, the model relocation and the
+Wave 0.5 process split. A branch carrying both halves was opened and closed
+unmerged once #7 made its Enter work redundant.
+
+What is unverified: **the two dictation data-loss fixes have no
 automated coverage at all.** `VBoardImeService` has no Robolectric or unit test,
 and its voice path needs a live `VoiceSessionController` (real `AudioRecord`,
 model load) plus an input connection to drive. Both fixes were verified by
 reading the effect paths only, and **need hand-testing on a device before
 release**. `EditorProfile` is covered — 5 new Robolectric tests in
 `app/src/test/kotlin/com/vboard/app/ime/EditorProfileTest.kt`, verified red
-against the old code. Gates on the branch: `:app` 50 tests, 0 failures (was 45);
+against the old code. Gates at merge: `:app` 61 tests, 0 failures;
 `assembleDebug` and `assembleRelease` green; privacy audit PASS; `:core`
 untouched.
 
-**Core suite: 777 tests, 0 failures, 1 skipped**, measured on this branch. The
+**Core suite: 777 tests, 0 failures, 1 skipped**, measured on `main`. The
 **762** recorded below predates the Package B/C merge (`b5b8fca`) and was never
 re-measured after it; the per-package split that follows was written from the
 separate worktrees and its arithmetic no longer adds to the total. The skip is
@@ -404,7 +407,7 @@ paragraph" sections above for the old and new names.
   question for the common case.
 - Does lint get `abortOnError = true`? CI lint currently cannot fail the build.
 - **The two dictation data-loss fixes on
-  `fix/ime-dictation-dataloss-and-enter-action` are untested.** Nothing
+  `4b6ed2a` are untested.** Nothing
   exercises `VBoardImeService.onStartInputView` finalizing the buffered
   utterance, or `onBackToKeyboard()` committing the in-flight partial. Standing
   up a test needs either a fake `VoiceSessionController` seam or an

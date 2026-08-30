@@ -301,7 +301,7 @@ an argument about cleaned output.
 **D6 — Should the mic keep listening across a host's `restartInput`?**
 *Ruling: no. Rejected, not deferred.* A host that calls `restartInput` on every
 `commitText` now ends dictation after each utterance — the speech is committed rather
-than lost (fixed on `fix/ime-dictation-dataloss-and-enter-action`), but the user must
+than lost (fixed in `4b6ed2a`), but the user must
 re-tap the mic. Keeping capture alive across the teardown would reverse **VB-107**
 (`PRODUCT_SPEC.md:92` — "audio capture NEVER continues while the voice bar is not
 visible") and **VB-620** (`:197` — mic released within 500 ms), and it breaks invariant 7
