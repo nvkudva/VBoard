@@ -275,7 +275,12 @@ class VBoardImeService : InputMethodService() {
         setLayer(KeyboardLayer.LETTERS)
         keyboardView.enterIcon = profile.enterIcon
         keyboardView.micEnabled = profile.fieldKind.allowsVoice
-        endVoiceSession(hideOnly = true, finalizePending = false)
+        // Runs on every invocation, including the restarting == true re-entry our
+        // own commitText provokes in hosts that call restartInput (TextWatcher
+        // setText, AutoCompleteTextView, input filters). Dictation still ends
+        // here — VB-107 keeps the mic off once the bar is gone — but the words
+        // already spoken are finalized into the field instead of discarded.
+        endVoiceSession(hideOnly = true, finalizePending = true)
         clipboard.onInputViewShown(
             fieldIsPassword = profile.fieldKind == FieldKind.PASSWORD,
             noPersonalizedLearning = profile.noPersonalizedLearning,
@@ -751,7 +756,10 @@ class VBoardImeService : InputMethodService() {
             voiceBar = bar
             bar.listener = object : VoiceBarView.Listener {
                 override fun onOrbTapped() = controller.stopAndFinalize()
-                override fun onBackToKeyboard() = controller.cancelSession()
+                // Leaving for the keyboard is not a cancel: the session ends and
+                // the mic is released either way, but the utterance in flight is
+                // committed exactly as an orb tap would (VB-107).
+                override fun onBackToKeyboard() = controller.stopAndFinalize()
                 override fun onErrorAction(kind: VoiceBarView.ErrorActionKind) {
                     when (kind) {
                         VoiceBarView.ErrorActionKind.OPEN_PERMISSION,

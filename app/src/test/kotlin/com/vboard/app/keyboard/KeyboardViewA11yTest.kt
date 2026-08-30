@@ -158,6 +158,15 @@ class KeyboardViewA11yTest {
         assertEquals("Search", description(view, enter))
         view.enterIcon = KeyIcon.SEND
         assertEquals("Send", description(view, enter))
+        view.enterIcon = KeyIcon.GO
+        assertEquals("Go", description(view, enter))
+        view.enterIcon = KeyIcon.NEXT
+        assertEquals("Next", description(view, enter))
+        view.enterIcon = KeyIcon.DONE
+        assertEquals("Done", description(view, enter))
+        // The key only has room for "Prev"; TalkBack still says the whole word.
+        view.enterIcon = KeyIcon.PREVIOUS
+        assertEquals("Previous", description(view, enter))
     }
 
     @Test

@@ -17,6 +17,10 @@
     <!-- Enter renders as the editor's action; announce that action, not "Enter". -->
     <string name="a11y_enter_search">Search</string>
     <string name="a11y_enter_send">Send</string>
+    <string name="a11y_enter_go">Go</string>
+    <string name="a11y_enter_next">Next</string>
+    <string name="a11y_enter_done">Done</string>
+    <string name="a11y_enter_previous">Previous</string>
 
     <string name="a11y_symbols_more">More symbols</string>
     <string name="a11y_clipboard">Clipboard</string>

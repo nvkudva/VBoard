@@ -18,6 +18,13 @@
     <string name="voice_error_generic">Something went wrong with voice typing</string>
     <string name="voice_back_to_keyboard">Back to keyboard</string>
 
+    <!-- Enter key labels for the editor actions with no glyph. Kept short: the
+         key is 1.25 units wide, which is why "previous" is abbreviated here and
+         spoken in full by a11y_enter_previous. -->
+    <string name="key_action_go">Go</string>
+    <string name="key_action_next">Next</string>
+    <string name="key_action_previous">Prev</string>
+
     <!-- Accessibility -->
     <string name="a11y_mic_key">Voice typing</string>
     <string name="a11y_backspace">Backspace</string>

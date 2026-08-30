@@ -248,7 +248,19 @@ class KeyboardView(
                 canvas.drawText(spacebarLabel, cx, cy + labelPaint.textSize / 3, labelPaint)
                 labelPaint.typeface = Typeface.SANS_SERIF
             }
-            key.icon != KeyIcon.NONE -> drawIcon(canvas, resolveIcon(key), cx, cy, contentColor)
+            key.icon != KeyIcon.NONE -> {
+                val icon = resolveIcon(key)
+                val text = actionKeyLabel(icon)
+                if (text == null) {
+                    drawIcon(canvas, icon, cx, cy, contentColor)
+                } else {
+                    // Same size as every other multi-character key label (`?123`),
+                    // which is the same 1.25u width, so the fit is already proven.
+                    labelPaint.textSize = sp(KeyboardMetrics.KEY_LABEL_SMALL_SP)
+                    labelPaint.color = contentColor
+                    canvas.drawText(text, cx, cy + labelPaint.textSize / 3, labelPaint)
+                }
+            }
             else -> {
                 val small = key.label.length > 1 || layoutIsSymbols()
                 labelPaint.textSize =
@@ -273,6 +285,19 @@ class KeyboardView(
         }
         KeyAction.Enter -> enterIcon
         else -> key.icon
+    }
+
+    /**
+     * Short text for the editor actions with no agreed glyph. DESIGN_SPEC §3.1
+     * names icons for return, send, search and done only; inventing arrows for
+     * go/next/previous would repeat the defect this fixes — a key that looks like
+     * one thing and does another. Null means "this icon is drawn, not written".
+     */
+    private fun actionKeyLabel(icon: KeyIcon): String? = when (icon) {
+        KeyIcon.GO -> context.getString(R.string.key_action_go)
+        KeyIcon.NEXT -> context.getString(R.string.key_action_next)
+        KeyIcon.PREVIOUS -> context.getString(R.string.key_action_previous)
+        else -> null
     }
 
     private fun layoutIsSymbols(): Boolean = layout.layer != KeyboardLayer.LETTERS
@@ -349,6 +374,15 @@ class KeyboardView(
                 p.close()
                 canvas.drawPath(p, iconFillPaint)
             }
+            KeyIcon.DONE -> {
+                val p = android.graphics.Path()
+                p.moveTo(cx - s * 0.8f, cy + s * 0.05f)
+                p.lineTo(cx - s * 0.25f, cy + s * 0.6f)
+                p.lineTo(cx + s * 0.85f, cy - s * 0.55f)
+                canvas.drawPath(p, iconPaint)
+            }
+            // Written, not drawn — see [actionKeyLabel].
+            KeyIcon.GO, KeyIcon.NEXT, KeyIcon.PREVIOUS -> Unit
             KeyIcon.MIC -> {
                 val mw = s * 0.42f
                 canvas.drawRoundRect(
@@ -715,6 +749,11 @@ class KeyboardView(
             KeyAction.Enter -> when (enterIcon) {
                 KeyIcon.SEARCH -> context.getString(R.string.a11y_enter_search)
                 KeyIcon.SEND -> context.getString(R.string.a11y_enter_send)
+                KeyIcon.GO -> context.getString(R.string.a11y_enter_go)
+                KeyIcon.NEXT -> context.getString(R.string.a11y_enter_next)
+                KeyIcon.DONE -> context.getString(R.string.a11y_enter_done)
+                // Spoken in full where the key only has room for "Prev".
+                KeyIcon.PREVIOUS -> context.getString(R.string.a11y_enter_previous)
                 else -> context.getString(R.string.a11y_enter)
             }
             KeyAction.Space -> context.getString(R.string.a11y_space)

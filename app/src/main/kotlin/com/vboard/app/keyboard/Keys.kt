@@ -21,7 +21,15 @@ sealed interface KeyAction {
     data object ToClipboard : KeyAction
 }
 
-enum class KeyIcon { NONE, BACKSPACE, SHIFT, SHIFT_FILLED, CAPS_LOCK, ENTER, SEARCH, SEND, MIC, EMOJI, GLOBE }
+/**
+ * GO, NEXT, DONE and PREVIOUS complete the six editor actions of VB-701. Only
+ * DONE has a glyph the design spec names; the other three are drawn as short
+ * text by the view (see KeyboardView.actionKeyLabel).
+ */
+enum class KeyIcon {
+    NONE, BACKSPACE, SHIFT, SHIFT_FILLED, CAPS_LOCK, ENTER, SEARCH, SEND,
+    GO, NEXT, DONE, PREVIOUS, MIC, EMOJI, GLOBE,
+}
 
 data class Key(
     val action: KeyAction,
