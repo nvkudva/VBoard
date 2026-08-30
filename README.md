@@ -35,7 +35,7 @@ panel, spacebar cursor control, double-space period, themes, haptics.
 
 | Module | What | Where it runs |
 |---|---|---|
-| `core` | Pure-JVM Kotlin: transcript cleanup engine, suggestion/autocorrect engine, dictation state machine, resumable model downloader. ~250 unit tests. | Any JVM (`./gradlew -Pvboard.skipAndroid=true :core:test`) |
+| `core` | Pure-JVM Kotlin: transcript cleanup engine, suggestion/autocorrect engine, dictation state machine, resumable model downloader. 777 unit tests, 1 skipped. | Any JVM (`./gradlew -Pvboard.skipAndroid=true :core:test`) |
 | `app` | Android IME: keyboard/voice-bar UI, sherpa-onnx + MediaPipe integration, model download service, Compose onboarding & settings. | Android 10+ (minSdk 29) |
 
 ## Building
