@@ -284,7 +284,13 @@ class VBoardImeService : InputMethodService() {
         setLayer(KeyboardLayer.LETTERS)
         keyboardView.enterIcon = profile.enterIcon
         keyboardView.micEnabled = profile.fieldKind.allowsVoice
-        endVoiceSession(hideOnly = true, finalizePending = false)
+        // Runs on every invocation, including the restarting == true re-entry our
+        // own commitText provokes in hosts that call restartInput (TextWatcher
+        // setText, AutoCompleteTextView, input filters). Dictation still ends here
+        // and VB-107 keeps the mic off once the bar is gone, but the words already
+        // spoken are finalized into the field rather than discarded -- matching
+        // what onFinishInputView below already does.
+        endVoiceSession(hideOnly = true, finalizePending = true)
         clipboard.onInputViewShown(
             fieldIsPassword = profile.fieldKind == FieldKind.PASSWORD,
             noPersonalizedLearning = profile.noPersonalizedLearning,
@@ -820,7 +826,11 @@ class VBoardImeService : InputMethodService() {
             voiceBar = bar
             bar.listener = object : VoiceBarView.Listener {
                 override fun onOrbTapped() = controller.stopAndFinalize()
-                override fun onBackToKeyboard() = controller.cancelSession()
+                // Leaving for the keyboard ends the session and releases the mic
+                // either way, but the utterance in flight is committed exactly as
+                // an orb tap would (VB-107). cancelSession never dispatches
+                // EndpointDetected, so it discarded the partial.
+                override fun onBackToKeyboard() = controller.stopAndFinalize()
                 override fun onErrorAction(kind: VoiceBarView.ErrorActionKind) {
                     when (kind) {
                         VoiceBarView.ErrorActionKind.OPEN_PERMISSION,
@@ -863,6 +873,13 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun commitUtterance(index: Int, text: String) {
+            // The voice gate ran once, against the editor focused when the user
+            // started speaking (startVoice). Finalizing is asynchronous and
+            // onStartInputView swaps `profile` under it -- an app toggling password
+            // visibility mid-dictation does exactly that via setInputType +
+            // restartInput, and onFinishInput does not run on a restarting == true
+            // re-entry to cancel the pending commit.
+            if (!fieldAcceptsVoiceNow(index)) return
             val ic = currentInputConnection ?: run {
                 // The editor went away before the final pass returned. Nothing to
                 // do here, but it must not be invisible in a bug report.
@@ -882,7 +899,23 @@ class VBoardImeService : InputMethodService() {
             }
         }
 
+        /**
+         * True when the currently focused editor still accepts dictation.
+         *
+         * Logs a count and an utterance index only -- never the text, its length,
+         * or anything derived from it.
+         */
+        private fun fieldAcceptsVoiceNow(index: Int): Boolean {
+            if (profile.fieldKind.allowsVoice) return true
+            Log.w(TAG, "focused field no longer accepts voice; utterance $index dropped")
+            return false
+        }
+
         override fun replaceUtterance(index: Int, newText: String) {
+            // A refinement lands seconds after the commit it replaces, so the field
+            // can have changed kind in between. The prefix match below proves the
+            // text is untouched, not that the field still accepts it.
+            if (!fieldAcceptsVoiceNow(index)) return
             val ic = currentInputConnection ?: return
             val old = voiceCommits[index] ?: return
             val before = ic.getTextBeforeCursor(old.length, 0)?.toString() ?: return
