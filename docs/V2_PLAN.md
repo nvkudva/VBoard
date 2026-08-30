@@ -218,6 +218,17 @@ handling).
 | W2.1 | Hold-to-talk + release-to-send | `app/keyboard/KeyboardView.kt`, `app/voice/VoiceBarView.kt`, `app/ime/VBoardImeService.kt` | M |
 | W2.2 | Force-endpoint on any touch outside the keyboard | `app/ime/VBoardImeService.kt`, `app/voice/VoiceSessionController.kt` | S |
 | W2.3 | Adaptive endpointing, re-scoped after W2.1 | `app/voice/AsrEngines.kt` | S–M |
+| W2.4 | **VB-220 mic long-press → session-scoped raw dictation** — unimplemented in V1 | `app/keyboard/Keys.kt`, `app/keyboard/KeyboardView.kt`, `app/ime/VBoardImeService.kt` | S |
+
+**W2.4 is a dead gesture today, not a missing one.** `PRODUCT_SPEC.md:133`
+specifies the long-press as a raw-dictation toggle for the next utterance;
+`KeyboardView.kt:451` arms a long-press timer for the mic and `:576` fires the
+same `KeyAction.Mic` a tap does, because `Keys.kt:214` sets no
+`longPressAction`. Users hold the mic, get plain voice mode, and read it as
+broken. `KeyboardView.kt:781` also returns `null` as the mic's long-click label,
+so whatever action lands here is invisible to TalkBack until a string is added —
+that is part of the item, not a follow-up. W2.4 shares `KeyboardView.kt` and
+`VBoardImeService.kt` with W2.1 and must not run concurrently with it.
 
 **W2.1 must ship alongside tap-to-toggle, never replacing it. This is not negotiable.**
 A press-and-hold gesture is hostile to TalkBack and to the RSI/motor-impairment persona —
@@ -226,7 +237,9 @@ undo the accessibility work already funded and delivered. Neither product nor de
 flagged this.
 
 W2.1 also retires the long-open silence-timeout question for the 80% case: release *is*
-the endpoint, so the trailing-silence wait disappears from short utterances entirely.
+the endpoint, so the trailing-silence wait disappears from short utterances entirely. It
+is likewise the sanctioned answer to "keep listening while typing", which is rejected
+outright in §4 D6.
 
 ### Wave 3 — Learning
 
@@ -242,7 +255,8 @@ transcription is defensible, but only if stated out loud.
 ## 4. Adjudications
 
 Five disagreements survived two rounds of debate between product and design. They were
-deliberately not averaged.
+deliberately not averaged. D6 was added later, out of an IME bug fix rather than the
+review.
 
 **D1 — Do mechanical edits get undo pills?**
 *Ruling: one undo ring holding every change; selective presentation.* Mechanical changes
@@ -283,6 +297,19 @@ differentiator. Adopt **send-ready rate** (dictated characters reaching a Send a
 zero manual edits) as north star, plus time-to-send-ready; demote keep-rate to a relative
 guardrail. WER becomes a CI regression gate **on raw pre-cleanup transcripts only**, never
 an argument about cleaned output.
+
+**D6 — Should the mic keep listening across a host's `restartInput`?**
+*Ruling: no. Rejected, not deferred.* A host that calls `restartInput` on every
+`commitText` now ends dictation after each utterance — the speech is committed rather
+than lost (fixed in `4b6ed2a`), but the user must
+re-tap the mic. Keeping capture alive across the teardown would reverse **VB-107**
+(`PRODUCT_SPEC.md:92` — "audio capture NEVER continues while the voice bar is not
+visible") and **VB-620** (`:197` — mic released within 500 ms), and it breaks invariant 7
+of `core/src/test/kotlin/com/vboard/core/qa/StateMachineFuzzTest.kt` ("entering Idle
+always carries `HideVoiceBar`") by construction, not by accident. The legitimate lever for
+the same user need is **W2.1 hold-to-talk**, where release is the endpoint and the
+question of what happens between utterances does not arise. Anyone who re-files this as a
+bug should be pointed here.
 
 ---
 

@@ -29,7 +29,33 @@ by Unicode code point instead of by ASCII assumption — closing VB-QA-22, -23,
 **Wave 1.5 is complete.** A, B and C have all landed; nothing in the wave
 remains.
 
-**Core suite: 762 tests, 0 failures, 1 skipped** (761 tests · 18 skips after
+**Three `:app` IME fixes landed in `4b6ed2a` (PR #9), released as
+`v1.0.0-alpha.4`:** dictated speech is finalized rather than discarded when a
+host calls `restartInput` or the user returns to the keyboard, and the voice
+gate is re-checked on both utterance write paths rather than only at
+`startVoice`. Not a wave package — no `V2_PLAN` item was closed.
+
+The Enter/IME-action half of the same bug report landed **independently** in
+`0ab3e71` (PR #7), alongside inline dictation, the model relocation and the
+Wave 0.5 process split. A branch carrying both halves was opened and closed
+unmerged once #7 made its Enter work redundant.
+
+What is unverified: **the two dictation data-loss fixes have no
+automated coverage at all.** `VBoardImeService` has no Robolectric or unit test,
+and its voice path needs a live `VoiceSessionController` (real `AudioRecord`,
+model load) plus an input connection to drive. Both fixes were verified by
+reading the effect paths only, and **need hand-testing on a device before
+release**. `EditorProfile` is covered — 5 new Robolectric tests in
+`app/src/test/kotlin/com/vboard/app/ime/EditorProfileTest.kt`, verified red
+against the old code. Gates at merge: `:app` 61 tests, 0 failures;
+`assembleDebug` and `assembleRelease` green; privacy audit PASS; `:core`
+untouched.
+
+**Core suite: 777 tests, 0 failures, 1 skipped**, measured on `main`. The
+**762** recorded below predates the Package B/C merge (`b5b8fca`) and was never
+re-measured after it; the per-package split that follows was written from the
+separate worktrees and its arithmetic no longer adds to the total. The skip is
+still VB-QA-05. Historical counts, left as written: (761 tests · 18 skips after
 Package A; 11 after Package B; 29 skips before Package A). Package B removed 7
 `@Disabled` annotations and Package C removed 10; Package C also added one
 regression test, which is the whole of the 761 → 762. No golden case changed —
@@ -306,10 +332,10 @@ of the wave if beta shipped before Wave 1.5 finished. Neither needs lifting now.
   gated on `FieldKind.allowsAutoCapitalize` at every position, so cleanup does
   not transform `PASSWORD` content at all.
 
-**`README.md` still discloses VB-QA-24 and VB-QA-29 as live defects in its
-privacy section.** Both are closed; that disclosure is now wrong on both counts
-and needs a one-line correction before beta. It was out of scope for this
-branch's documentation work and has **not** been made — it is left as a task.
+**`README.md` used to disclose VB-QA-24 and VB-QA-29 as live defects in its
+privacy section.** Corrected in `b5b8fca`: `### Known limitations in the above`
+now describes both in the past tense and states they are closed. No longer a
+task.
 
 The boundary is not fully sealed, though: the payment-card rule in
 `ClipClassifier` still reads raw text, so a card number carrying a zero-width
@@ -380,3 +406,45 @@ paragraph" sections above for the old and new names.
 - Silence-timeout value — still unresolved; W2.1 hold-to-talk would retire the
   question for the common case.
 - Does lint get `abortOnError = true`? CI lint currently cannot fail the build.
+- **The two dictation data-loss fixes on
+  `4b6ed2a` are untested.** Nothing
+  exercises `VBoardImeService.onStartInputView` finalizing the buffered
+  utterance, or `onBackToKeyboard()` committing the in-flight partial. Standing
+  up a test needs either a fake `VoiceSessionController` seam or an
+  instrumentation test with a real editor; neither exists. Hand-test on a device
+  before release.
+- **A host that calls `restartInput` on every `commitText` now ends dictation
+  after each utterance.** The speech is no longer lost, but the session does not
+  continue — the user must re-tap the mic. Continuing it is the keep-alive
+  restructure, which was considered and rejected (next item).
+- **"Keep listening while typing" is decided against, not deferred.** It would
+  reverse VB-107 (`PRODUCT_SPEC.md:92`, "audio capture NEVER continues while the
+  voice bar is not visible") and VB-620 (`PRODUCT_SPEC.md:197`, mic released
+  within 500 ms), and it breaks invariant 7 of
+  `core/src/test/kotlin/com/vboard/core/qa/StateMachineFuzzTest.kt` ("entering
+  Idle always carries `HideVoiceBar`", declared at `:30`, asserted at `:136`) by
+  construction. Recorded in `V2_PLAN.md` §4 as D6. Do not re-open it as a bug.
+- **VB-220 (`PRODUCT_SPEC.md:133`) is unimplemented.** The mic long-press is
+  specified as a session-scoped raw-dictation toggle. In the code
+  `KeyboardView.kt:451` arms a long-press timer for the mic and `:576` fires the
+  same `KeyAction.Mic` a tap does, because `Keys.kt:214` sets no
+  `longPressAction`. The gesture is therefore a dead toggle that users perceive
+  as broken rather than absent. Also `KeyboardView.kt:781` (`longClickLabelFor`)
+  falls through to `null` for the mic, so any future long-press action would be
+  invisible to TalkBack until a label is added.
+- **`DESIGN_SPEC.md:133` says the Enter key swaps to accent fill + an `onAccent`
+  icon for send/search/go/done.** The code never did this and still does not,
+  after VB-701. Cosmetic; unimplemented. `GO`/`NEXT`/`PREVIOUS` draw as short
+  text because `DESIGN_SPEC.md:134` names no glyph for them.
+- **The pre-existing TODO at
+  `app/src/main/kotlin/com/vboard/app/voice/VoiceSessionController.kt:189-192`
+  is a privacy trap as written.** It proposes "a pending-commit replayed on the
+  next `onStartInput`". Implementing that literally removes the `onFinishInput`
+  cancellation, which is the only barrier stopping speech captured in app A from
+  committing into app B. Anyone taking it needs an editor-identity token on the
+  pending commit. The commit-time voice re-check added on this branch narrows
+  the field-kind case but does not close this one.
+- **`ToolbarView` and `AiFixController` are fully implemented but never
+  instantiated** by `VBoardImeService` — no reference to either outside their own
+  files (`KeyboardA11y.kt` only names `ToolbarView` in a comment). It is dead
+  surface that reads like a fix site; mounting it is W0.1, not a bug fix.
