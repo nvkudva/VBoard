@@ -800,6 +800,14 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun commitUtterance(index: Int, text: String) {
+            // The voice gate ran once, against the editor focused when the user
+            // started speaking (startVoice). A finalize is asynchronous, and
+            // onStartInputView swaps `profile` under it — an app toggling password
+            // visibility mid-dictation does exactly that via setInputType +
+            // restartInput, and onFinishInput does not run on a restarting == true
+            // re-entry to cancel the pending commit. Without this re-check the
+            // utterance lands in a field the spec says never receives voice.
+            if (!fieldAcceptsVoiceNow(index)) return
             val ic = currentInputConnection ?: run {
                 // The editor went away before the final pass returned. Nothing to
                 // do here, but it must not be invisible in a bug report.
@@ -813,6 +821,10 @@ class VBoardImeService : InputMethodService() {
         }
 
         override fun replaceUtterance(index: Int, newText: String) {
+            // A refinement lands seconds after the commit it replaces, so the
+            // field can have changed kind in between. The prefix match below
+            // proves the text is untouched, not that the field still accepts it.
+            if (!fieldAcceptsVoiceNow(index)) return
             val ic = currentInputConnection ?: return
             val old = voiceCommits[index] ?: return
             val before = ic.getTextBeforeCursor(old.length, 0)?.toString() ?: return
@@ -826,6 +838,18 @@ class VBoardImeService : InputMethodService() {
             ic.commitText(joined, 1)
             ic.endBatchEdit()
             voiceCommits[index] = joined
+        }
+
+        /**
+         * True when the currently focused editor still accepts dictation.
+         *
+         * Logs a count and an utterance index only — never the text, its length,
+         * or anything derived from it.
+         */
+        private fun fieldAcceptsVoiceNow(index: Int): Boolean {
+            if (profile.fieldKind.allowsVoice) return true
+            Log.w(TAG, "focused field no longer accepts voice; utterance $index dropped")
+            return false
         }
 
         override fun deleteLastUtterance() {
