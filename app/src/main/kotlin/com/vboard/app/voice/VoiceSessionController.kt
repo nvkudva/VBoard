@@ -195,10 +195,10 @@ class VoiceSessionController(
      * field (VB-107), so this runs the same deferred-stop path as an orb tap
      * rather than discarding the buffered audio.
      *
-     * TODO: the commit is asynchronous, so an input connection that dies before
-     *  the final pass returns still loses the utterance. Closing that hole needs
-     *  the commit to survive the editor session (a pending-commit replayed on the
-     *  next onStartInput), which is a larger change than this fix.
+     * The commit is asynchronous, so the input connection can still die before
+     * the final pass returns. That no longer loses the utterance: the host holds
+     * it and replays it into the next editor of the same app (W0.2, see
+     * VBoardImeService.replayPendingVoiceCommit).
      */
     fun finishSession() {
         stopAndFinalize()

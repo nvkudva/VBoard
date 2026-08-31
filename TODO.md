@@ -1,6 +1,6 @@
 # TODO
 
-- [ ] W0.2 Draft rescue: an input connection that dies before the final pass loses the user's speech (`TODO` in `finishSession()`); owns `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt`. Do before W0.1 — both own `VBoardImeService.kt`.
+- [x] W0.2 Draft rescue: an input connection that dies before the final pass loses the user's speech (`TODO` in `finishSession()`); owns `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt`. Do before W0.1 — both own `VBoardImeService.kt`.
 - [ ] W0.1 Unify the suggestion strip and toolbar into one row, mount the built-but-unmounted AI-fix toolbar, add attribution UI and the working-set transcript; owns `app/keyboard/SuggestionStripView.kt`, `ToolbarView.kt`, `app/ime/VBoardImeService.kt`, `app/correct/AiFixController.kt`.
 - [ ] W0.3 Instrumentation: send-ready rate, time-to-send-ready, opt-in telemetry, content-free crash reporting; new `core/metrics/**` plus `app/settings/**`. Can run alongside W0.4.
 - [ ] W0.4 Measure the performance and size gates and record the numbers; assign a standing owner to `core/text/`. Touches `app/build.gradle.kts`, `docs/PERFORMANCE_REVIEW.md`.

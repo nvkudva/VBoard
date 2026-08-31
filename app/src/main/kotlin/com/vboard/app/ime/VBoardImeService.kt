@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -94,6 +95,20 @@ class VBoardImeService : InputMethodService() {
 
     /** Committed voice utterances by index, for scratch-that / refinement replace. */
     private val voiceCommits = HashMap<Int, String>()
+
+    /**
+     * The utterance a dead input connection could not take, replayed once into
+     * the next editor under [PendingDictation]'s rule. Dropped rather than
+     * carried if that rule says no.
+     */
+    private var pendingVoiceCommit: PendingDictation? = null
+
+    /**
+     * The package that owned the editor when dictation started. Captured here
+     * because the replay decision is made after that editor is already gone, so
+     * `currentInputEditorInfo` can no longer answer for it.
+     */
+    private var voicePackageName: String? = null
 
     private val settings: SettingsSnapshot get() = app.settings.snapshot.value
 
@@ -230,6 +245,7 @@ class VBoardImeService : InputMethodService() {
         super.onStartInput(info, restarting)
         profile = EditorProfile.from(info)
         resetEditingState()
+        replayPendingVoiceCommit(info)
     }
 
     /**
@@ -890,6 +906,7 @@ class VBoardImeService : InputMethodService() {
 
     private fun startVoice() {
         if (!profile.fieldKind.allowsVoice) return
+        voicePackageName = currentInputEditorInfo?.packageName
         // The mic key is the stop button in inline mode: there is no orb to tap.
         if (voiceInline) {
             voiceController?.stopAndFinalize()
@@ -963,9 +980,10 @@ class VBoardImeService : InputMethodService() {
             // re-entry to cancel the pending commit.
             if (!fieldAcceptsVoiceNow(index)) return
             val ic = currentInputConnection ?: run {
-                // The editor went away before the final pass returned. Nothing to
-                // do here, but it must not be invisible in a bug report.
-                Log.w(TAG, "no input connection; dictated utterance $index dropped")
+                // The editor went away before the final pass returned. The speech
+                // is held rather than dropped; the next editor of the same app
+                // gets it (W0.2).
+                stashPendingVoiceCommit(index, text)
                 return
             }
             // A half-typed word owns the composing region in inline mode;
@@ -1131,6 +1149,58 @@ class VBoardImeService : InputMethodService() {
             updateShiftForContext()
             refreshSuggestions()
         }
+    }
+
+    /**
+     * Holds an utterance the dead editor could not take. Successive drops in one
+     * session accumulate in speaking order, so a burst of them is not silently
+     * reduced to the last one.
+     *
+     * Logs the utterance index and nothing derived from the text.
+     */
+    private fun stashPendingVoiceCommit(index: Int, text: String) {
+        pendingVoiceCommit = PendingDictation.hold(
+            pendingVoiceCommit,
+            text,
+            voicePackageName,
+            SystemClock.elapsedRealtime(),
+        )
+        Log.w(TAG, "no input connection; dictated utterance $index held for replay")
+    }
+
+    /**
+     * Replays a held utterance into the editor that just opened -- but only into
+     * one that plausibly belongs to the same piece of work the user was speaking
+     * into: the same app, soon enough, and a field that accepts dictation at all.
+     *
+     * The hold is cleared before any of those are checked, so a single failed
+     * attempt discards the text instead of letting it follow the user into a
+     * third editor.
+     */
+    private fun replayPendingVoiceCommit(info: EditorInfo?) {
+        val pending = pendingVoiceCommit ?: return
+        pendingVoiceCommit = null
+
+        when (pending.verdictFor(info?.packageName, profile.fieldKind.allowsVoice, SystemClock.elapsedRealtime())) {
+            ReplayVerdict.EXPIRED -> {
+                Log.w(TAG, "held dictation expired; dropped")
+                return
+            }
+            ReplayVerdict.OTHER_APP -> {
+                Log.w(TAG, "held dictation belongs to another app; dropped")
+                return
+            }
+            ReplayVerdict.FIELD_REFUSES -> {
+                Log.w(TAG, "new field does not accept voice; held dictation dropped")
+                return
+            }
+            ReplayVerdict.REPLAY -> Unit
+        }
+        val ic = currentInputConnection ?: run {
+            Log.w(TAG, "no input connection on replay; held dictation dropped")
+            return
+        }
+        ic.commitText(CommitPlanner.joinForInsertion(precedingText(4), pending.text), 1)
     }
 
     companion object {
