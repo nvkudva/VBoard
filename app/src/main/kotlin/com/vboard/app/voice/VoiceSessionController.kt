@@ -79,6 +79,12 @@ class VoiceSessionController(
         fun deleteLastUtterance()
         fun onSessionEnded()
         fun showError(message: String, action: VoiceBarView.ErrorActionKind)
+        /**
+         * The engines are still loading, so nothing said right now is heard.
+         * Only called when they were not already resident — a warm press goes
+         * straight to [showListening].
+         */
+        fun showPreparing()
         fun showListening()
         fun showFinalizing()
         fun showRefining()
@@ -226,6 +232,10 @@ class VoiceSessionController(
             dispatch(Event.PermissionDenied)
             return
         }
+        // Say so rather than showing the listening UI over a mic that is not
+        // recording yet: a cold press takes seconds, and the old bar spent them
+        // claiming to listen.
+        if (!VoiceEngines.isLoaded) host.showPreparing()
         prepareJob = scope.launch {
             val outcome = withContext(Dispatchers.IO) {
                 try {
@@ -749,8 +759,15 @@ object VoiceEngines {
 
     private const val TAG = "VBoardEngines"
 
-    /** How long the engines stay resident after the last dictation. */
-    private const val IDLE_RELEASE_MS = 90_000L
+    /**
+     * How long the engines stay resident after the keyboard goes away.
+     *
+     * Was 90s, which is shorter than the gap between two messages in the same
+     * conversation, so almost every mic press paid the full multi-second load
+     * again. The timer is only armed once the keyboard is hidden, so an open
+     * keyboard now keeps the engines for as long as it is open.
+     */
+    private const val IDLE_RELEASE_MS = 600_000L
 
     enum class LoadResult {
         READY,
@@ -791,6 +808,7 @@ object VoiceEngines {
      */
     private val idleLock = Any()
     private var idleJob: Job? = null
+    private var warmJob: Job? = null
 
     /**
      * Outstanding claims on the native handles (a live reader loop, a decode, a
@@ -866,6 +884,27 @@ object VoiceEngines {
         streaming = null
         finalPass = null
         refiner = null
+    }
+
+    /**
+     * Loads the engines before the user asks for them, off the main thread.
+     *
+     * Called when the keyboard becomes visible: the load is the whole of the
+     * delay between the mic press and the first word being heard, and doing it
+     * here means the press usually finds them already resident. Idempotent, and
+     * safe to race with a session — [load] is synchronized and returns early
+     * when the engines are up.
+     */
+    fun warmUp(app: VBoardApp) {
+        cancelIdleRelease()
+        if (isLoaded) return
+        synchronized(idleLock) {
+            if (warmJob?.isActive == true) return
+            warmJob = idleScope.launch(Dispatchers.IO) {
+                val result = runCatching { load(app) }.getOrNull()
+                if (result != LoadResult.READY) Log.i(TAG, "warm-up did not load engines: $result")
+            }
+        }
     }
 
     /** Cancels a pending idle release; call when a session is starting. */

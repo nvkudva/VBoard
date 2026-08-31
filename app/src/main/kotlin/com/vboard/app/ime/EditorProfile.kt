@@ -55,8 +55,15 @@ data class EditorProfile(
             // An editor that wants a literal newline — a multiline field, or one
             // that set IME_FLAG_NO_ENTER_ACTION — keeps the newline even when it
             // also declares an action for the toolbar-style button next to it.
+            // An editor with its own action label (a custom "Search" or "Post"
+            // button) declares the id in actionId, not in imeOptions, so reading
+            // imeOptions alone left Enter inserting a newline in exactly the
+            // fields most likely to have one.
+            val customActionId = info.actionLabel?.let { info.actionId.takeIf { id -> id != 0 } }
             val enterAction = if (noEnterAction || multiline) {
                 EditorInfo.IME_ACTION_NONE
+            } else if (customActionId != null) {
+                customActionId
             } else {
                 when (action) {
                     EditorInfo.IME_ACTION_GO,
@@ -78,7 +85,9 @@ data class EditorProfile(
                 EditorInfo.IME_ACTION_NEXT -> KeyIcon.NEXT
                 EditorInfo.IME_ACTION_PREVIOUS -> KeyIcon.PREVIOUS
                 EditorInfo.IME_ACTION_DONE -> KeyIcon.DONE
-                else -> KeyIcon.ENTER
+                // A custom action has a label we cannot draw, but it is still an
+                // action: anything but the newline glyph would be a lie.
+                else -> if (customActionId != null) KeyIcon.GO else KeyIcon.ENTER
             }
 
             val noLearning =

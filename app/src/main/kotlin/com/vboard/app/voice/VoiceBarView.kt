@@ -15,8 +15,6 @@ import com.vboard.app.R
 import com.vboard.app.keyboard.KeyboardMetrics
 import com.vboard.app.keyboard.KeyboardTheme
 import com.vboard.app.keyboard.withAlphaFraction
-import kotlin.math.min
-import kotlin.math.sin
 
 /**
  * The compact Gboard-style voice bar (DESIGN_SPEC §4): a 120dp surface with a
@@ -37,7 +35,7 @@ class VoiceBarView(
 
     enum class ErrorActionKind { OPEN_PERMISSION, OPEN_DOWNLOAD, DISMISS }
 
-    private enum class Mode { LISTENING, FINALIZING, REFINING, ERROR }
+    private enum class Mode { PREPARING, LISTENING, FINALIZING, REFINING, ERROR }
 
     var listener: Listener? = null
 
@@ -57,7 +55,6 @@ class VoiceBarView(
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
     private val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(2f)
@@ -74,9 +71,13 @@ class VoiceBarView(
         textAlign = Paint.Align.CENTER
     }
     private val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
 
     private val breathAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 1200
+        duration = 1600
         repeatCount = android.animation.ValueAnimator.INFINITE
         interpolator = LinearInterpolator()
         addUpdateListener { invalidate() }
@@ -88,6 +89,17 @@ class VoiceBarView(
     }
 
     // ------------------------------------------------------------ public API
+
+    /**
+     * The engines are still loading. Drawn as its own state because the bar used
+     * to say "Listening…" here, over a microphone that was not recording yet.
+     */
+    fun showPreparing() {
+        mode = Mode.PREPARING
+        errorMessage = ""
+        startBreathing()
+        invalidate()
+    }
 
     fun showListening() {
         mode = Mode.LISTENING
@@ -211,10 +223,10 @@ class VoiceBarView(
         }
         if (text.isEmpty()) {
             hintPaint.color = theme.transcriptPartial
-            val hint = if (mode == Mode.LISTENING) {
-                context.getString(R.string.voice_listening)
-            } else {
-                context.getString(R.string.voice_tap_to_speak)
+            val hint = when (mode) {
+                Mode.PREPARING -> context.getString(R.string.voice_preparing)
+                Mode.LISTENING -> context.getString(R.string.voice_listening)
+                else -> context.getString(R.string.voice_tap_to_speak)
             }
             canvas.drawText(hint, width / 2f, bottom / 2f + sp(5f), hintPaint)
             return
@@ -261,20 +273,48 @@ class VoiceBarView(
         val orbR = dp(28f)
         val cx = width / 2f
 
-        // Halo (amplitude + breathing).
+        // Rings, not a halo: the old single translucent circle grew and shrank
+        // in place, which read as a blob rather than as sound leaving the mic.
+        // Three rings emanate outward on a shared clock, each fading as it goes,
+        // and the voice only decides how far and how bright they get — so the orb
+        // is alive in silence and reacts without jumping.
+        val phase = breathAnimator.animatedFraction
         if (mode == Mode.LISTENING) {
-            val breath = (sin(breathAnimator.animatedFraction * 2 * Math.PI) * 0.5 + 0.5).toFloat()
-            val haloR = orbR + dp(4f) + dp(10f) * haloLevel + dp(3f) * breath
-            haloPaint.color = theme.micPulse.withAlphaFraction(0.24f)
-            canvas.drawCircle(cx, cy, haloR, haloPaint)
+            for (i in 0 until RING_COUNT) {
+                val t = (phase + i.toFloat() / RING_COUNT) % 1f
+                val reach = dp(12f) + dp(20f) * haloLevel
+                ringPaint.color = theme.micPulse
+                    .withAlphaFraction((1f - t) * (0.12f + 0.45f * haloLevel))
+                ringPaint.strokeWidth = dp(2.5f) * (1f - 0.55f * t)
+                canvas.drawCircle(cx, cy, orbR + dp(2f) + t * reach, ringPaint)
+            }
         }
 
-        // Orb.
+        // Orb. It swells slightly with the voice, which is the part of the old
+        // halo worth keeping, and dims while the engines are still loading so a
+        // press before we are ready does not look like a press that worked.
+        val orbScale = if (mode == Mode.LISTENING) 1f + 0.07f * haloLevel else 1f
         orbPaint.color = when (mode) {
             Mode.ERROR -> theme.error
+            Mode.PREPARING -> theme.accent.withAlphaFraction(0.45f)
             else -> theme.accent
         }
-        canvas.drawCircle(cx, cy, orbR, orbPaint)
+        canvas.drawCircle(cx, cy, orbR * orbScale, orbPaint)
+
+        // Preparing: one arc sweeping the orb's edge. Deliberately not a ring
+        // pulse — this is waiting, not hearing, and the two must not look alike.
+        if (mode == Mode.PREPARING) {
+            val sweepR = orbR + dp(5f)
+            ringPaint.color = theme.accent.withAlphaFraction(0.9f)
+            ringPaint.strokeWidth = dp(2.5f)
+            canvas.drawArc(
+                android.graphics.RectF(cx - sweepR, cy - sweepR, cx + sweepR, cy + sweepR),
+                phase * 360f,
+                90f,
+                false,
+                ringPaint,
+            )
+        }
 
         // Mic glyph (or stop square while finalizing).
         val onColor = if (mode == Mode.ERROR) theme.onError else theme.onAccent
@@ -354,5 +394,8 @@ class VoiceBarView(
     private companion object {
         /** DESIGN_SPEC §4.1 control row: keyboard-return, orb, overflow. */
         const val CONTROL_ROW_DP = 56f
+
+        /** Amplitude rings drawn around the orb while listening. */
+        const val RING_COUNT = 3
     }
 }

@@ -4,9 +4,15 @@
     <string name="ime_name">VBoard</string>
     <string name="subtype_en_us">English (US)</string>
     <string name="settings_title">VBoard Settings</string>
+    <string name="toolbar_clipboard">Clipboard</string>
+    <string name="toolbar_clipboard_cd">Open clipboard history</string>
+    <string name="toolbar_settings">Settings</string>
+    <string name="toolbar_settings_cd">Open VBoard settings</string>
 
     <!-- Voice bar -->
     <string name="voice_listening">Listening…</string>
+    <string name="voice_preparing">Getting ready…</string>
+    <string name="voice_preparing_toast">Voice is still starting up…</string>
     <string name="voice_tap_to_speak">Tap the mic and start speaking</string>
     <string name="voice_cleaning">Cleaning ✨</string>
     <string name="voice_error_no_permission">Microphone access is needed for voice typing</string>
