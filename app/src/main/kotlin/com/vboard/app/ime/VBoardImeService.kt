@@ -1,6 +1,7 @@
 package com.vboard.app.ime
 
 import android.animation.ValueAnimator
+import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.util.Log
@@ -26,9 +27,12 @@ import com.vboard.app.keyboard.KeyboardMetrics
 import com.vboard.app.keyboard.KeyboardTheme
 import com.vboard.app.keyboard.KeyboardView
 import com.vboard.app.keyboard.SuggestionStripView
+import com.vboard.app.keyboard.ToolbarView
 import com.vboard.app.onboarding.OnboardingActivity
+import com.vboard.app.settings.SettingsActivity
 import com.vboard.app.settings.SettingsSnapshot
 import com.vboard.app.voice.VoiceBarView
+import com.vboard.app.voice.VoiceEngines
 import com.vboard.app.voice.VoiceSessionController
 import com.vboard.core.clipboard.ClipEntry
 import com.vboard.core.clipboard.PinResult
@@ -59,6 +63,7 @@ class VBoardImeService : InputMethodService() {
     private lateinit var keyboardView: KeyboardView
     private var emojiPanel: EmojiPanelView? = null
     private var clipboardPanel: ClipboardPanelView? = null
+    private lateinit var toolbar: ToolbarView
     private var voiceBar: VoiceBarView? = null
     private var voiceController: VoiceSessionController? = null
 
@@ -105,6 +110,22 @@ class VBoardImeService : InputMethodService() {
         }
     }
 
+    /**
+     * The engines now outlive a single dictation by design, so the system has to
+     * have a way to get that memory back: without this, a longer residency window
+     * is just a bigger leak from the platform's point of view.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Not a `level >= RUNNING_LOW` test: TRIM_MEMORY_UI_HIDDEN (20) is a
+        // higher number than RUNNING_LOW (10) and fires every time the keyboard
+        // is dismissed, which would undo the residency this is guarding.
+        val pressured = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        if (pressured) VoiceEngines.releaseAll()
+    }
+
     override fun onDestroy() {
         voiceController?.destroy()
         clipboard.onDestroy()
@@ -141,6 +162,11 @@ class VBoardImeService : InputMethodService() {
         keyboardView = KeyboardView(this, theme).apply {
             listener = keyListener
         }
+        toolbar = ToolbarView(this, theme).apply {
+            hapticsEnabled = settings.hapticsEnabled
+            listener = ToolbarView.Listener { id -> onToolbarAction(id) }
+            setActions(toolbarActions())
+        }
         strip = SuggestionStripView(this, theme).apply {
             listener = object : SuggestionStripView.Listener {
                 override fun onSuggestionPicked(suggestion: Suggestion) = pickSuggestion(suggestion)
@@ -158,6 +184,10 @@ class VBoardImeService : InputMethodService() {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(theme.bgKeyboard)
+            addView(
+                toolbar,
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+            )
             addView(
                 strip,
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
@@ -278,12 +308,17 @@ class VBoardImeService : InputMethodService() {
 
         theme = KeyboardTheme.forContext(this, settings.themeMode)
         keyboardView.applyTheme(theme)
+        toolbar.applyTheme(theme)
         strip.applyTheme(theme)
         root.setBackgroundColor(theme.bgKeyboard)
 
         setLayer(KeyboardLayer.LETTERS)
         keyboardView.enterIcon = profile.enterIcon
         keyboardView.micEnabled = profile.fieldKind.allowsVoice
+        // Load the ASR engines while the user is still reading the screen. The
+        // press-to-first-word delay was almost entirely this load, paid on the
+        // press because nothing started it earlier.
+        if (profile.fieldKind.allowsVoice) VoiceEngines.warmUp(app)
         // Runs on every invocation, including the restarting == true re-entry our
         // own commitText provokes in hosts that call restartInput (TextWatcher
         // setText, AutoCompleteTextView, input filters). Dictation still ends here
@@ -304,6 +339,9 @@ class VBoardImeService : InputMethodService() {
         // buffered audio is finalized rather than dropped on the floor.
         endVoiceSession(hideOnly = true, finalizePending = true)
         commitComposingAsIs()
+        // The engines stay resident while the keyboard is up and start their
+        // countdown here, so switching fields inside an app never reloads them.
+        VoiceEngines.scheduleIdleRelease()
         clipboard.onInputViewHidden()
         clipboard.flush()
         clipboardPanel?.dismissActionMenu()
@@ -322,6 +360,7 @@ class VBoardImeService : InputMethodService() {
         if (!::keyboardView.isInitialized) return
         keyboardView.hapticsEnabled = s.hapticsEnabled
         keyboardView.keyPreviewEnabled = s.keyPreviewEnabled
+        toolbar.hapticsEnabled = s.hapticsEnabled
         // Live, with no keyboard restart: swap in the layout the setting asks for.
         if (layer == KeyboardLayer.LETTERS) {
             val wanted = KeyboardLayouts.forLayer(KeyboardLayer.LETTERS, s.numberRowEnabled)
@@ -331,6 +370,7 @@ class VBoardImeService : InputMethodService() {
         if (newTheme != theme) {
             theme = newTheme
             keyboardView.applyTheme(theme)
+            toolbar.applyTheme(theme)
             strip.applyTheme(theme)
             emojiPanel?.applyTheme(theme)
             clipboardPanel?.applyTheme(theme)
@@ -439,7 +479,13 @@ class VBoardImeService : InputMethodService() {
         if (profile.performsImeAction) {
             ic.performEditorAction(profile.imeActionId)
         } else {
-            ic.commitText("\n", 1)
+            // Not commitText("\n"): a WebView, Chrome's omnibox and the Google
+            // app's search box all set IME_FLAG_NO_ENTER_ACTION and submit on a
+            // KEYCODE_ENTER key event, so a committed newline character was
+            // swallowed as literal text and the search never ran. A real key
+            // event still inserts a newline in a field that wants one, because
+            // the editor is the one deciding what Enter means.
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
         }
         updateShiftForContext()
         refreshSuggestions()
@@ -793,6 +839,42 @@ class VBoardImeService : InputMethodService() {
     }
 
     /** The screen that can grant the mic permission or fetch a missing model. */
+    /**
+     * The toolbar row (VB-230). Clipboard and settings first: both were
+     * previously reachable only by long-pressing a key or leaving the keyboard
+     * entirely. "AI fix" belongs here too and is not wired yet.
+     */
+    private fun toolbarActions(): List<ToolbarView.Action> = listOf(
+        ToolbarView.Action(
+            id = ToolbarView.ActionId.CLIPBOARD,
+            glyph = ToolbarView.Glyph.CLIPBOARD,
+            label = getString(R.string.toolbar_clipboard),
+            contentDescription = getString(R.string.toolbar_clipboard_cd),
+        ),
+        ToolbarView.Action(
+            id = ToolbarView.ActionId.SETTINGS,
+            glyph = ToolbarView.Glyph.SETTINGS,
+            label = getString(R.string.toolbar_settings),
+            contentDescription = getString(R.string.toolbar_settings_cd),
+        ),
+    )
+
+    private fun onToolbarAction(id: ToolbarView.ActionId) {
+        stopInlineVoiceForTyping()
+        when (id) {
+            ToolbarView.ActionId.CLIPBOARD -> setLayer(KeyboardLayer.CLIPBOARD)
+            ToolbarView.ActionId.SETTINGS -> openSettings()
+            ToolbarView.ActionId.AI_FIX -> Unit // not wired yet
+        }
+    }
+
+    private fun openSettings() {
+        startActivity(
+            Intent(this, SettingsActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
     private fun openOnboarding() {
         startActivity(
             Intent(this, OnboardingActivity::class.java)
@@ -954,6 +1036,20 @@ class VBoardImeService : InputMethodService() {
                 return
             }
             voiceBar?.showError(message, action)
+        }
+
+        override fun showPreparing() {
+            if (voiceInline) {
+                // Inline dictation has no bar to put the state in, so the user
+                // gets the one thing that matters: do not start talking yet.
+                Toast.makeText(
+                    this@VBoardImeService,
+                    getString(R.string.voice_preparing_toast),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                return
+            }
+            voiceBar?.showPreparing()
         }
 
         override fun showListening() {

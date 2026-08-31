@@ -48,12 +48,12 @@ class ToolbarView(
 ) : View(context) {
 
     /** Identity of a toolbar action. Add cases as the row grows. */
-    enum class ActionId { AI_FIX }
+    enum class ActionId { AI_FIX, CLIPBOARD, SETTINGS }
 
     /** How an action is drawn right now. Mirrors the core-side [FixButtonState]. */
     enum class ActionState { IDLE, RUNNING, ACTIVE, DISABLED }
 
-    enum class Glyph { SPARKLE, UNDO }
+    enum class Glyph { SPARKLE, UNDO, CLIPBOARD, SETTINGS }
 
     /**
      * One pill. [contentDescription] is required, not optional: this view has no
@@ -259,6 +259,29 @@ class ToolbarView(
                 fillPaint.color = color
                 drawStar(canvas, cx - dp(1.5f), cy - dp(1f), dp(6f))
                 drawStar(canvas, cx + dp(4.5f), cy + dp(4.5f), dp(3f))
+            }
+            Glyph.CLIPBOARD -> {
+                strokePaint.color = color
+                val w = dp(4.5f)
+                val h = dp(6.5f)
+                // Board, then the clip sitting on its top edge.
+                canvas.drawRoundRect(
+                    cx - w, cy - h + dp(1.5f), cx + w, cy + h, dp(1.5f), dp(1.5f), strokePaint,
+                )
+                canvas.drawRoundRect(
+                    cx - dp(2.5f), cy - h, cx + dp(2.5f), cy - h + dp(3f),
+                    dp(1f), dp(1f), strokePaint,
+                )
+            }
+            Glyph.SETTINGS -> {
+                strokePaint.color = color
+                // Two sliders: cheaper to draw than a cog and reads the same at
+                // 18dp, where a cog's teeth turn into noise.
+                for ((row, knobX) in listOf(-dp(3f) to dp(2f), dp(3f) to -dp(2f))) {
+                    canvas.drawLine(cx - dp(6f), cy + row, cx + dp(6f), cy + row, strokePaint)
+                    fillPaint.color = color
+                    canvas.drawCircle(cx + knobX, cy + row, dp(2f), fillPaint)
+                }
             }
             Glyph.UNDO -> {
                 strokePaint.color = color

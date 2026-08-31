@@ -161,6 +161,8 @@ class AiFixController(
         when (id) {
             ToolbarView.ActionId.AI_FIX ->
                 if (undo.peek(now(), fieldToken) != null) performUndo() else performFix()
+            // The row also carries actions this controller does not own.
+            ToolbarView.ActionId.CLIPBOARD, ToolbarView.ActionId.SETTINGS -> Unit
         }
     }
 
