@@ -3,7 +3,7 @@
 Status: **captured for review. Nothing here is being built.**
 Date: 2026-08-29
 
-This is the raw material behind [V2_PLAN.md](V2_PLAN.md): every idea product and design
+This is the raw material behind [PLAN.md](../PLAN.md): every idea product and design
 proposed, what they argued about across two rounds, what each conceded, and what was cut.
 The disagreements are recorded *as disagreements* rather than averaged, because that is
 where most of the information is.
@@ -140,7 +140,7 @@ available. Verified and accepted.
 ## 4. Standing disagreements
 
 Recorded rather than resolved by the participants; adjudicated in
-[V2_PLAN.md §4](V2_PLAN.md).
+[PLAN.md §4](../PLAN.md).
 
 | | Product | Design |
 |---|---|---|

@@ -3,7 +3,7 @@
 Status: **findings captured for review. Nothing here is being built.**
 Date: 2026-08-29 · Source: Android performance review, verified against the source.
 
-Companion documents: [V2_PLAN.md](V2_PLAN.md) · [V2_PROPOSALS.md](V2_PROPOSALS.md)
+Companion documents: [PLAN.md](../PLAN.md) · [V2_PROPOSALS.md](V2_PROPOSALS.md)
 
 ---
 

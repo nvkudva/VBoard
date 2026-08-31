@@ -1,0 +1,23 @@
+# TODO
+
+- [ ] W0.2 Draft rescue: an input connection that dies before the final pass loses the user's speech (`TODO` in `finishSession()`); owns `app/voice/VoiceSessionController.kt`, `app/ime/VBoardImeService.kt`. Do before W0.1 — both own `VBoardImeService.kt`.
+- [ ] W0.1 Unify the suggestion strip and toolbar into one row, mount the built-but-unmounted AI-fix toolbar, add attribution UI and the working-set transcript; owns `app/keyboard/SuggestionStripView.kt`, `ToolbarView.kt`, `app/ime/VBoardImeService.kt`, `app/correct/AiFixController.kt`.
+- [ ] W0.3 Instrumentation: send-ready rate, time-to-send-ready, opt-in telemetry, content-free crash reporting; new `core/metrics/**` plus `app/settings/**`. Can run alongside W0.4.
+- [ ] W0.4 Measure the performance and size gates and record the numbers; assign a standing owner to `core/text/`. Touches `app/build.gradle.kts`, `docs/PERFORMANCE_REVIEW.md`.
+- [ ] Hand-test on a device: the two dictation data-loss fixes from `4b6ed2a` have no automated coverage — `VBoardImeService` has no Robolectric or unit test and its voice path needs a live `VoiceSessionController`.
+- [ ] Hand-test on a device: the Wave 0.5 `:llm` / `:ui` process split has never been run on hardware; CI cannot tell you a process boundary is right.
+- [ ] Correct `README.md` — it still discloses VB-QA-24 and VB-QA-29 as live defects; both are closed.
+- [ ] Fix `ClipClassifier`'s payment-card rule, which still reads raw text instead of classifying by code point (no VB-QA id; see `docs/QA_REPORT.md` §9 "Not in any package").
+- [ ] Fix `DIGIT_RUN_PATTERN`'s separator class, still ASCII-only (no VB-QA id; same section of `docs/QA_REPORT.md`).
+- [ ] VB-QA-05 idempotency — the one remaining `@Disabled` in `:core`, in `CleanupPropertyTest`; never belonged to any wave.
+- [ ] W1.1 Transcript normalization + two-model alignment + per-word confidence; new `core/confidence/**` plus `core/session/FinalTranscriptPolicy.kt`. Gate: measured disagreement precision against a hand-labeled ≥200-utterance corpus, published either way.
+- [ ] W1.2 Spoken-format intelligence — times, money, dates, spoken email addresses; new `core/format/**` plus `core/text/Tokens.kt`. After W1.1; conversion must run before `ContentGuard` and emit a `MECHANICAL` edit per conversion.
+- [ ] W2.1 Hold-to-talk + release-to-send, shipped **alongside** tap-to-toggle and never replacing it; owns `app/keyboard/KeyboardView.kt`, `app/voice/VoiceBarView.kt`, `app/ime/VBoardImeService.kt`.
+- [ ] W2.2 Force-endpoint on any touch outside the keyboard; owns `app/ime/VBoardImeService.kt`, `app/voice/VoiceSessionController.kt`.
+- [ ] W2.3 Adaptive endpointing, re-scoped after W2.1 lands; owns `app/voice/AsrEngines.kt`.
+- [ ] W2.4 Mic long-press → session-scoped raw dictation (VB-220): `Keys.kt:214` sets no `longPressAction`, and `KeyboardView.kt:781` returns `null` as the mic's long-click label, so add the TalkBack string too. Must not run concurrently with W2.1.
+- [ ] Wave 3 (confusion learning · biased re-decode of disputed spans · clipboard-harvested name biasing) — blocked on beta correction data and on W1.1's precision number. Cancelled outright if that number lands below ~70%.
+- [x] Wave 1.5 Package A — Unicode-safe text core; closed VB-QA-12, -13, -14, -15, -16, -17, -21, -27.
+- [x] Wave 1.5 Package B — destructive-stage confidence and field-kind honesty; closed VB-QA-18, -19, -20, -29, -30, -31 and gap G3.
+- [x] Wave 1.5 Package C — commit-planning, clipboard-privacy and suggestion-ranking seams; closed VB-QA-22, -23, -24, -25, -26, -28, -32, -33, -34.
+- [x] Wave 0.5 — LLM refiner moved to `:llm` behind `ILlmRefiner.aidl`; activities, download worker and WorkManager moved to `:ui`.

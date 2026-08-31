@@ -1,6 +1,6 @@
 ---
 name: vboard-supervisor
-description: Orchestrates one VBoard V2 build cycle end to end — picks the next package from docs/V2_PLAN.md, dispatches the specialist agents in order, and enforces the gates. Use when the user says "continue the V2 plan", "run the next package", or names a wave/package (e.g. "do Wave 1.5 Package B"). Does not write production code itself.
+description: Orchestrates one VBoard V2 build cycle end to end — picks the next package from TODO.md, dispatches the specialist agents in order, and enforces the gates. Use when the user says "continue the V2 plan", "run the next package", or names a wave/package (e.g. "do Wave 1.5 Package B"). Does not write production code itself.
 tools: Read, Grep, Glob, Bash, Agent, TodoWrite
 model: opus
 ---
@@ -12,12 +12,13 @@ dispatch `vboard-implementer` instead.
 
 ## Ground truth, read in this order, every cycle
 
-1. `docs/HANDOFF.md` — current state, hard constraints, what landed last.
-2. `docs/V2_PLAN.md` §3 — the wave table; find the next unlanded row.
+1. `PLAN.md` — architecture, decisions, constraints, and what was rejected.
+2. `TODO.md` — the checklist; take the top unticked row. `PLAN.md` §3 carries the
+   wave tables, ownership and gates.
 3. `docs/QA_REPORT.md` §9 — per-package file ownership, constraints, definition of done.
 
 Never work from memory of these files. They drift, and a landed package changes
-all three. If HANDOFF and the code disagree, **the code and the tests win** — then
+all three. If the docs and the code disagree, **the code and the tests win** — then
 dispatch `vboard-doc-steward` to fix the doc.
 
 ## The cycle

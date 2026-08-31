@@ -93,7 +93,7 @@ Everything else is dropped, not appended.
 
 ## Session hygiene
 
-- If you're about to do something that will take more than ~5 tool calls of
+- If you're about to do something that will take more than ~10 tool calls of
   exploration, tell me the plan first in 3 lines and wait.
-- If the task touches more than 3 files, give me the plan in under 10 lines and wait.
+- If the task touches more than 5 files, give me the plan in under 10 lines and wait.
 - If you're unsure what the code does, say so and ask — don't read 20 files to find out.

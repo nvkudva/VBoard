@@ -6,7 +6,7 @@ plan for the Android layer. Requirement IDs (VB-###) refer to
 
 Status: **findings captured; Wave 1.5 has landed in full — Packages A, B and C
 are all done** — see [§9 Work packages](#9-work-packages). Companion documents:
-[V2_PLAN.md](V2_PLAN.md) · [V2_PROPOSALS.md](V2_PROPOSALS.md) ·
+[PLAN.md](../PLAN.md) · [V2_PROPOSALS.md](V2_PROPOSALS.md) ·
 [PERFORMANCE_REVIEW.md](PERFORMANCE_REVIEW.md)
 
 ## 1. Test suite summary
@@ -264,7 +264,7 @@ looked healthy.
 
 ## 9. Work packages
 
-Scheduled as **Wave 1.5** in [V2_PLAN.md §3](V2_PLAN.md) — A as W1.5.1, B as
+Scheduled as **Wave 1.5** in [PLAN.md §3](../PLAN.md) — A as W1.5.1, B as
 W1.5.2, C as W1.5.3. The wave runs **before** Wave 1's feature work: bugs first,
 features later. **All three have landed.** A is on `main`; B and C were built
 concurrently in separate worktrees and are merged onto branch

@@ -1,6 +1,6 @@
 ---
 name: vboard-doc-steward
-description: Updates docs/HANDOFF.md, QA_REPORT.md and V2_PLAN.md after a package lands, so the next cold reader is not working from a stale map. Run at the end of every cycle, after the gate is green.
+description: Updates TODO.md, QA_REPORT.md and PLAN.md after a package lands, so the next cold reader is not working from a stale map. Run at the end of every cycle, after the gate is green.
 tools: Read, Edit, Grep, Glob, Bash
 model: opus
 ---
@@ -12,7 +12,7 @@ why it needs an owner.
 
 ## What goes stale, every single time
 
-- **Skip and test counts.** HANDOFF's headline count and QA_REPORT §2's per-suite
+- **Skip and test counts.** QA_REPORT §2's per-suite
   table. Get real numbers, never estimates:
   ```
   cd core/build/test-results/test && python3 -c "
@@ -31,12 +31,13 @@ why it needs an owner.
   paragraph: real counts, anything that changed beyond plan, anything a later
   package inherits.
 - **Boundary handoffs.** If package A took a file the plan assigned to B, fix
-  B's ownership list in *both* §9 and the V2_PLAN table. This is the drift most
+  B's ownership list in *both* §9 and the PLAN.md wave table. This is the drift most
   likely to cost a future cycle a merge conflict.
 - **Counts embedded in prose.** Corpus sizes, "N @Disabled tests waiting". These
   are quoted in several places and go stale together —
   `grep -rn "44\|53 cases\|@Disabled tests" docs/` and fix every hit.
-- **The build order** in HANDOFF's "What to build, in order".
+- **`TODO.md`** — tick the single line that changed, and append any new item
+  at the end. Never regenerate the file.
 
 ## Rules
 
@@ -45,7 +46,7 @@ why it needs an owner.
 - **Do not rewrite history.** These are partly audit documents. Mark things
   fixed; do not erase the finding.
 - **Record judgment calls.** If a test's expectation was changed, or a pin
-  flipped, say so and why, in HANDOFF. The next reader will otherwise re-litigate
+  flipped, say so and why, in PLAN.md's Revisions. The next reader will otherwise re-litigate
   it from scratch.
 - **Under-claim.** If a package only partly closed something, say which part.
   Overstating what landed is worse than saying nothing.
